@@ -4,6 +4,7 @@ Reward functions and reward-contract metadata for GRPO on GSM8K.
 
 import logging
 import math
+import statistics
 from dataclasses import asdict, dataclass
 from typing import Callable
 
@@ -155,8 +156,6 @@ def compute_group_rewards(
 
 
 def compute_grpo_advantages(rewards: list[float], eps: float = 1e-8) -> list[float]:
-    import statistics
-
     if len(rewards) == 0:
         return []
     mean_r = statistics.mean(rewards)

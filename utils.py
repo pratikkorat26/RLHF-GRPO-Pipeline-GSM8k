@@ -54,7 +54,7 @@ def normalise_numeric(raw: str) -> str | None:
         if den == 0:
             return None
         val = num / den
-        return str(int(val)) if val == int(val) else f"{val:.6g}"
+        return str(int(val)) if val % 1 == 0 else f"{val:.6g}"
 
     m = NUMERIC_RE.search(raw)
     if m:

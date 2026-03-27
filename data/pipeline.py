@@ -43,7 +43,7 @@ except ModuleNotFoundError:
         return iterable
 
 
-from .config import PipelineConfig
+from data.config import PipelineConfig
 from reward import REWARD_CONTRACT_VERSION, reward_contract_dict
 from utils import normalise_numeric
 
