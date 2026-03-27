@@ -6,14 +6,15 @@ from unittest.mock import patch
 
 try:
     from datasets import Dataset, load_from_disk
+
     DATASETS_AVAILABLE = True
 except ModuleNotFoundError:
     Dataset = None
     load_from_disk = None
     DATASETS_AVAILABLE = False
 
-from config import RewardConfig
-from pipeline import (
+from data.config import RewardConfig
+from data.pipeline import (
     _check_cross_split_leakage,
     build_pipeline,
     build_prompt_messages,
@@ -137,7 +138,9 @@ class TestRewardFunctions(unittest.TestCase):
         self.assertAlmostEqual(format_reward(comp), 1.0, places=5)
 
     def test_extract_fallback_last_numeric(self):
-        self.assertEqual(extract_final_answer("We tried 40, then 41, final answer 42"), "42")
+        self.assertEqual(
+            extract_final_answer("We tried 40, then 41, final answer 42"), "42"
+        )
 
     def test_extract_prefers_marker(self):
         self.assertEqual(extract_final_answer("Maybe 99.\n#### 42\nActually 100"), "42")
@@ -151,7 +154,9 @@ class TestRewardFunctions(unittest.TestCase):
     def test_composite_reward_penalises_format_only_answer(self):
         format_only = "Step 1.\nStep 2.\nStep 3.\n#### 999"
         correct = "Step 1.\nStep 2.\nStep 3.\n#### 42"
-        self.assertLess(composite_reward(format_only, "42"), composite_reward(correct, "42"))
+        self.assertLess(
+            composite_reward(format_only, "42"), composite_reward(correct, "42")
+        )
 
     def test_composite_reward_penalises_last_number_trap(self):
         bad = "I considered 42 first, but final answer is 100"
@@ -184,7 +189,9 @@ class TestGRPOAdvantages(unittest.TestCase):
         self.assertGreater(rewards[0], rewards[1])
 
 
-@unittest.skipUnless(DATASETS_AVAILABLE, "datasets package is required for dataset-backed tests")
+@unittest.skipUnless(
+    DATASETS_AVAILABLE, "datasets package is required for dataset-backed tests"
+)
 class TestLeakageChecks(unittest.TestCase):
     def _make_fake_ds(self, questions: list[str]):
         return Dataset.from_list([{"question": q} for q in questions])
@@ -196,7 +203,9 @@ class TestLeakageChecks(unittest.TestCase):
                 "test": self._make_fake_ds(["What is 3+3?", "Find area."]),
             }
         )
-        self.assertEqual(report["pairwise_overlaps"]["train__test"]["duplicate_count"], 0)
+        self.assertEqual(
+            report["pairwise_overlaps"]["train__test"]["duplicate_count"], 0
+        )
 
     def test_duplicate_overlap_reported(self):
         report = _check_cross_split_leakage(
@@ -205,7 +214,9 @@ class TestLeakageChecks(unittest.TestCase):
                 "test": self._make_fake_ds(["What is 2+2?", "Different."]),
             }
         )
-        self.assertEqual(report["pairwise_overlaps"]["train__test"]["duplicate_count"], 1)
+        self.assertEqual(
+            report["pairwise_overlaps"]["train__test"]["duplicate_count"], 1
+        )
 
 
 @unittest.skipUnless(DATASETS_AVAILABLE, "datasets package is required for build tests")
@@ -234,7 +245,7 @@ class TestBuildPipeline(unittest.TestCase):
 
     def test_build_pipeline_writes_artifacts_and_reports(self):
         with tempfile.TemporaryDirectory() as tmpdir:
-            with patch("pipeline.load_gsm8k", side_effect=self._fake_loader):
+            with patch("data.pipeline.load_gsm8k", side_effect=self._fake_loader):
                 dd = build_pipeline(
                     splits=["train", "test"],
                     output_dir=tmpdir,
@@ -256,8 +267,14 @@ class TestBuildPipeline(unittest.TestCase):
             self.assertTrue(validation_path.exists())
             self.assertTrue(leakage_path.exists())
 
-            trainer_lines = [json.loads(line) for line in trainer_jsonl.read_text(encoding="utf-8").splitlines()]
-            analysis_lines = [json.loads(line) for line in analysis_jsonl.read_text(encoding="utf-8").splitlines()]
+            trainer_lines = [
+                json.loads(line)
+                for line in trainer_jsonl.read_text(encoding="utf-8").splitlines()
+            ]
+            analysis_lines = [
+                json.loads(line)
+                for line in analysis_jsonl.read_text(encoding="utf-8").splitlines()
+            ]
 
             self.assertEqual(set(trainer_lines[0].keys()), set(PUBLIC_SAMPLE_FIELDS))
             self.assertIn("reference_solution", analysis_lines[0])
@@ -265,7 +282,9 @@ class TestBuildPipeline(unittest.TestCase):
 
             manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
             self.assertEqual(manifest["pipeline_contract_version"], "v1")
-            self.assertEqual(manifest["reward_contract"]["contract_version"], REWARD_CONTRACT_VERSION)
+            self.assertEqual(
+                manifest["reward_contract"]["contract_version"], REWARD_CONTRACT_VERSION
+            )
 
             trainer_hf = load_from_disk(str(Path(tmpdir) / "trainer" / "hf_dataset"))
             analysis_hf = load_from_disk(str(Path(tmpdir) / "analysis" / "hf_dataset"))
@@ -278,7 +297,7 @@ class TestBuildPipeline(unittest.TestCase):
             return Dataset.from_list(rows)
 
         with tempfile.TemporaryDirectory() as tmpdir:
-            with patch("pipeline.load_gsm8k", side_effect=dup_loader):
+            with patch("data.pipeline.load_gsm8k", side_effect=dup_loader):
                 with self.assertRaises(PipelineValidationError):
                     build_pipeline(
                         splits=["train", "test"],
@@ -292,7 +311,7 @@ class TestBuildPipeline(unittest.TestCase):
             return Dataset.from_list(rows)
 
         with tempfile.TemporaryDirectory() as tmpdir:
-            with patch("pipeline.load_gsm8k", side_effect=bad_loader):
+            with patch("data.pipeline.load_gsm8k", side_effect=bad_loader):
                 with self.assertRaises(PipelineValidationError):
                     build_pipeline(
                         splits=["train"],
@@ -308,7 +327,7 @@ class TestBuildPipeline(unittest.TestCase):
             return Dataset.from_list(long_rows)
 
         with tempfile.TemporaryDirectory() as tmpdir:
-            with patch("pipeline.load_gsm8k", side_effect=long_loader):
+            with patch("data.pipeline.load_gsm8k", side_effect=long_loader):
                 with self.assertRaises(PipelineValidationError):
                     build_pipeline(
                         splits=["train"],
@@ -322,17 +341,29 @@ class TestBuildPipeline(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmpdir:
             first = Path(tmpdir) / "run1"
             second = Path(tmpdir) / "run2"
-            with patch("pipeline.load_gsm8k", side_effect=self._fake_loader):
+            with patch("data.pipeline.load_gsm8k", side_effect=self._fake_loader):
                 build_pipeline(["train", "test"], str(first), num_workers=1)
-            with patch("pipeline.load_gsm8k", side_effect=self._fake_loader):
+            with patch("data.pipeline.load_gsm8k", side_effect=self._fake_loader):
                 build_pipeline(["train", "test"], str(second), num_workers=1)
 
-            first_train = (first / "trainer" / "jsonl" / "train.jsonl").read_text(encoding="utf-8")
-            second_train = (second / "trainer" / "jsonl" / "train.jsonl").read_text(encoding="utf-8")
+            first_train = (first / "trainer" / "jsonl" / "train.jsonl").read_text(
+                encoding="utf-8"
+            )
+            second_train = (second / "trainer" / "jsonl" / "train.jsonl").read_text(
+                encoding="utf-8"
+            )
             self.assertEqual(first_train, second_train)
 
-            first_validation = json.loads((first / "reports" / "validation_summary.json").read_text(encoding="utf-8"))
-            second_validation = json.loads((second / "reports" / "validation_summary.json").read_text(encoding="utf-8"))
+            first_validation = json.loads(
+                (first / "reports" / "validation_summary.json").read_text(
+                    encoding="utf-8"
+                )
+            )
+            second_validation = json.loads(
+                (second / "reports" / "validation_summary.json").read_text(
+                    encoding="utf-8"
+                )
+            )
             self.assertEqual(first_validation, second_validation)
 
 

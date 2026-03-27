@@ -7,7 +7,7 @@ import math
 from dataclasses import asdict, dataclass
 from typing import Callable
 
-from config import RewardConfig
+from data.config import RewardConfig
 from utils import FRACTION_RE, NUMERIC_RE, normalise_numeric
 
 logger = logging.getLogger("gsm8k_grpo.reward")
@@ -93,7 +93,7 @@ def format_reward(completion: str) -> float:
 
 def length_penalty(
     completion: str,
-    min_tokens: int = 20,   # matches RewardConfig.min_completion_tokens
+    min_tokens: int = 20,  # matches RewardConfig.min_completion_tokens
     max_tokens: int = 512,  # matches RewardConfig.max_completion_tokens
 ) -> float:
     n = len(completion.split())
@@ -148,7 +148,9 @@ def compute_group_rewards(
     weights: RewardWeights | None = None,
     soft_k: float = 0.1,
 ) -> list[float]:
-    fn = reward_fn or (lambda c, r: composite_reward(c, r, weights=weights, soft_k=soft_k))
+    fn = reward_fn or (
+        lambda c, r: composite_reward(c, r, weights=weights, soft_k=soft_k)
+    )
     return [fn(c, reference) for c in completions]
 
 
