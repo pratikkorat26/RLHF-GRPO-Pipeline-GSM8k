@@ -49,7 +49,10 @@ trainer/   analysis/          data/grpo/reports/
 pip install -r requirements.txt
 
 # Build JSONL + HuggingFace Dataset artifacts
-python pipeline.py --splits train test --output_dir ./data/grpo
+python -m data.pipeline --splits train test --output_dir ./data/grpo
+
+# Or with explicit PYTHONPATH
+set PYTHONPATH=. && python data/pipeline.py --splits train test --output_dir ./data/grpo
 
 # Run tests
 python -m pytest tests/ -v
@@ -58,7 +61,7 @@ python -m pytest tests/ -v
 ### Python API
 
 ```python
-from pipeline import build_pipeline
+from data.pipeline import build_pipeline
 
 trainer_dd = build_pipeline(
     splits=["train", "test"],
