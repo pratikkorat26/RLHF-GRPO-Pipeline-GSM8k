@@ -266,6 +266,39 @@ For local evaluation, `--model_name` must point to a valid saved model or
 checkpoint directory containing tokenizer and model files, or to a Hugging Face
 model id.
 
+### Qwen3.5 on HPC
+
+Qwen3.5 is handled through the `vllm` evaluation backend in text-only mode.
+If your cluster environment has an incompatible `vllm` / `transformers` /
+`huggingface_hub` combination, rebuild a clean evaluation env before debugging
+repo code.
+
+```bash
+python --version
+python -c "import vllm, transformers, huggingface_hub; print(vllm.__version__, transformers.__version__, huggingface_hub.__version__)"
+```
+
+Recommended fallback while aligning the `vllm` env:
+
+```bash
+python evaluate.py \
+  --model_name Qwen/Qwen3.5-0.8B \
+  --eval_backend transformers \
+  --num_samples 8 \
+  --batch_size 8 \
+  --output_dir /data/cmpe258-sp24/pratikkorat/models/eval_qwen_transformers_smoke
+```
+
+After the clean `vllm` env is working, use:
+
+```bash
+python evaluate.py \
+  --model_name Qwen/Qwen3.5-0.8B \
+  --eval_backend vllm \
+  --batch_size 64 \
+  --output_dir /data/cmpe258-sp24/pratikkorat/models/eval_qwen_full
+```
+
 If you need a scheduler wrapper, a minimal single-GPU job script looks like:
 
 ```bash

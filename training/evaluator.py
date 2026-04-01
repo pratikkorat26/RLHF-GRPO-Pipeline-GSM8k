@@ -140,7 +140,7 @@ def _run_vllm_evaluation(
 
     llm = LLM(
         model=cfg.model_name,
-        trust_remote_code=True,
+        language_model_only=True,
     )
     sampling_params = SamplingParams(
         temperature=cfg.temperature,
