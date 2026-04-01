@@ -46,17 +46,20 @@ trainer/   analysis/          data/grpo/reports/
 ## Quick Start
 
 ```bash
-pip install -r requirements.txt
+python3.11 -m venv .venv
+source .venv/bin/activate
+uv pip install torch torchvision --index-url https://download.pytorch.org/whl/cu121
+uv pip install -r requirements.txt
 
 # Build JSONL + HuggingFace Dataset artifacts
 python -m data.pipeline --splits train test --output_dir ./data/grpo
 
-# Or with explicit PYTHONPATH
-set PYTHONPATH=. && python data/pipeline.py --splits train test --output_dir ./data/grpo
-
 # Run tests
 python -m pytest tests/ -v
 ```
+
+The commands above are the supported Linux path. Hugging Face and Torch caches
+are expected to be configured externally on the target machine.
 
 ### Python API
 
@@ -184,20 +187,70 @@ trainer = GRPOTrainer(
 )
 ```
 
-### Run Training
+### Linux HPC Runbook
 
 ```bash
-pip install -r requirements.txt
+python3.11 -m venv .venv
+source .venv/bin/activate
+uv pip install torch torchvision --index-url https://download.pytorch.org/whl/cu121
+uv pip install -r requirements.txt
 
-# Single GPU
-python train_grpo.py
+export TMPDIR=/scratch/$USER/gsm8k_grpo_tmp
+mkdir -p "$TMPDIR"
 
-# Multi-GPU (recommended for GRPO)
-accelerate launch train_grpo.py
+# Build dataset artifacts if needed
+python -m data.pipeline --splits train test --output_dir ./data/grpo
+
+# Single-GPU H100 training; vLLM is enabled by default
+python train_grpo.py \
+  --model_name Qwen/Qwen3.5-0.8B-Base \
+  --dataset_path ./data/grpo/trainer \
+  --output_dir ./output/grpo \
+  --temp_dir "$TMPDIR"
+
+# Resume from the latest checkpoint
+python train_grpo.py \
+  --model_name Qwen/Qwen3.5-0.8B-Base \
+  --dataset_path ./data/grpo/trainer \
+  --output_dir ./output/grpo \
+  --temp_dir "$TMPDIR" \
+  --resume_from_checkpoint ./output/grpo/checkpoint-500
+
+# Optional fallback path without vLLM
+python train_grpo.py \
+  --model_name Qwen/Qwen3.5-0.8B-Base \
+  --dataset_path ./data/grpo/trainer \
+  --output_dir ./output/grpo_no_vllm \
+  --no_use_vllm
+
+# Evaluate a trained checkpoint or final export
+python evaluate.py \
+  --model_name ./output/grpo \
+  --dataset_path ./data/grpo/trainer \
+  --num_samples 8 \
+  --output_dir ./output/eval
 ```
 
-Training defaults to local TRL generation with `report_to=none`, so no
-`trackio` login or external tracker setup is required.
+Training defaults to `report_to=none`, so no tracker login is required. GRPO
+training also defaults to `vllm` generation on the supported Linux/HPC path.
 
-Optional acceleration/backends such as `vllm` are environment-specific and are
-not part of the default project path.
+If you need a scheduler wrapper, a minimal single-GPU job script looks like:
+
+```bash
+#!/bin/bash
+#SBATCH --job-name=gsm8k-grpo
+#SBATCH --gres=gpu:h100:1
+#SBATCH --cpus-per-task=8
+#SBATCH --mem=64G
+#SBATCH --time=08:00:00
+
+source .venv/bin/activate
+export TMPDIR=/scratch/$USER/gsm8k_grpo_tmp
+mkdir -p "$TMPDIR"
+
+python train_grpo.py \
+  --model_name Qwen/Qwen3.5-0.8B-Base \
+  --dataset_path ./data/grpo/trainer \
+  --output_dir ./output/grpo \
+  --temp_dir "$TMPDIR"
+```

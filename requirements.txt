@@ -1,8 +1,10 @@
-# ── Core ML stack ─────────────────────────────────────────────────────────────
-# torch is NOT listed here — install it first via the CUDA index:
-#   uv pip install torch --index-url https://download.pytorch.org/whl/cu121
+# Linux/HPC production path:
+#   uv pip install torch torchvision --index-url https://download.pytorch.org/whl/cu121
+#   uv pip install -r requirements.txt
+# vLLM is part of the supported single-H100 Linux training stack.
 transformers
 datasets
 accelerate
 trl
+vllm
 tqdm

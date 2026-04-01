@@ -18,10 +18,12 @@ class TrainingConfig:
     model_name: str = "Qwen/Qwen3.5-0.8B-Base"
     dataset_path: str = "./data/grpo/trainer"
     output_dir: str = "./output/grpo"
+    temp_dir: str | None = None
 
     # --- GRPO algorithm ---
     num_generations: int = 4    # G: completions sampled per prompt per step
     beta: float = 0.04          # KL-penalty coefficient (divergence from reference)
+    use_vllm: bool = True
 
     # --- batching & optimiser ---
     per_device_train_batch_size: int = 2
@@ -43,7 +45,9 @@ class TrainingConfig:
     # --- logging & checkpointing ---
     logging_steps: int = 10
     save_steps: int = 500
+    save_total_limit: int | None = 2
     report_to: str = "none"
+    resume_from_checkpoint: str | None = None
 
 
 @dataclass(frozen=True)

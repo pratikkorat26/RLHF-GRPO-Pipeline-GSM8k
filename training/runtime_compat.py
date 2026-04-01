@@ -3,6 +3,16 @@ from __future__ import annotations
 import importlib.util
 
 
+def _probe_vllm() -> str | None:
+    if importlib.util.find_spec("vllm") is None:
+        return "vLLM is not installed."
+    try:
+        import vllm._C  # type: ignore[attr-defined]  # noqa: F401
+    except Exception as exc:
+        return f"{type(exc).__name__}: {exc}"
+    return None
+
+
 def prepare_trl_runtime() -> list[str]:
     """Disable optional integrations that are installed but unusable."""
     issues: list[str] = []
@@ -21,14 +31,25 @@ def prepare_trl_runtime() -> list[str]:
             )
 
     if importlib.util.find_spec("vllm") is not None:
-        try:
-            import vllm._C  # type: ignore[attr-defined]  # noqa: F401
-        except Exception as exc:
+        vllm_issue = _probe_vllm()
+        if vllm_issue is not None:
             import trl.import_utils as trl_import_utils
 
             trl_import_utils._vllm_available = False
             issues.append(
-                f"Disabled broken vLLM integration: {type(exc).__name__}: {exc}"
+                f"Disabled broken vLLM integration: {vllm_issue}"
             )
 
     return issues
+
+
+def require_vllm() -> None:
+    """Raise a clear error when the configured training path requires vLLM."""
+    issue = _probe_vllm()
+    if issue is None:
+        return
+    raise RuntimeError(
+        "Training is configured to use vLLM, but the backend is unavailable. "
+        "Disable it with --no_use_vllm or install a working Linux vLLM build. "
+        f"Original issue: {issue}"
+    )

@@ -17,7 +17,7 @@ from pathlib import Path
 
 from training.config import TrainingConfig
 from training.model import load_model_and_tokenizer
-from training.runtime_compat import prepare_trl_runtime
+from training.runtime_compat import prepare_trl_runtime, require_vllm
 
 _OPTIONAL_BACKEND_ISSUES = prepare_trl_runtime()
 
@@ -138,6 +138,7 @@ def build_grpo_trainer(
         # --- GRPO algorithm ---
         num_generations=cfg.num_generations,
         beta=cfg.beta,
+        use_vllm=cfg.use_vllm,
         # --- batch & optimiser ---
         per_device_train_batch_size=cfg.per_device_train_batch_size,
         gradient_accumulation_steps=cfg.gradient_accumulation_steps,
@@ -154,6 +155,7 @@ def build_grpo_trainer(
         # --- logging ---
         logging_steps=cfg.logging_steps,
         save_steps=cfg.save_steps,
+        save_total_limit=cfg.save_total_limit,
         report_to=cfg.report_to,
     )
 
@@ -189,18 +191,30 @@ def run_training(cfg: TrainingConfig) -> None:
     logger.info(f"  model     : {cfg.model_name}")
     logger.info(f"  data      : {cfg.dataset_path}")
     logger.info(f"  output    : {cfg.output_dir}")
+    logger.info(f"  use_vllm  : {cfg.use_vllm}")
     logger.info(f"  G (gens)  : {cfg.num_generations}")
     logger.info(f"  beta (KL) : {cfg.beta}")
     logger.info("=" * 60)
 
-    os.makedirs(cfg.output_dir, exist_ok=True)
+    output_dir = Path(cfg.output_dir)
+    output_dir.mkdir(parents=True, exist_ok=True)
 
-    model, tokenizer = load_model_and_tokenizer(cfg.model_name)
+    if cfg.temp_dir:
+        temp_dir = Path(cfg.temp_dir)
+        temp_dir.mkdir(parents=True, exist_ok=True)
+        os.environ["TMPDIR"] = str(temp_dir)
+        os.environ["TMP"] = str(temp_dir)
+        os.environ["TEMP"] = str(temp_dir)
+
+    if cfg.use_vllm:
+        require_vllm()
+
+    model, tokenizer = load_model_and_tokenizer(cfg.model_name, training=True)
     train_ds = make_trl_dataset(cfg.dataset_path, split="train")
     eval_ds = make_trl_dataset(cfg.dataset_path, split="test")
 
     trainer = build_grpo_trainer(cfg, model, tokenizer, train_ds, eval_ds)
-    trainer.train()
-    trainer.save_model(cfg.output_dir)
-    tokenizer.save_pretrained(cfg.output_dir)
-    logger.info(f"Model saved to {cfg.output_dir}")
+    trainer.train(resume_from_checkpoint=cfg.resume_from_checkpoint)
+    trainer.save_model(str(output_dir))
+    tokenizer.save_pretrained(str(output_dir))
+    logger.info(f"Model saved to {output_dir}")
