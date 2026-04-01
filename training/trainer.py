@@ -210,7 +210,7 @@ def run_training(cfg: TrainingConfig) -> None:
     logger.info("  vllmcache : %s", runtime_env["VLLM_CACHE_ROOT"])
 
     if cfg.use_vllm:
-        require_vllm()
+        require_vllm("training")
 
     model, tokenizer = load_model_and_tokenizer(cfg.model_name, training=True)
     train_ds = make_trl_dataset(cfg.dataset_path, split="train")

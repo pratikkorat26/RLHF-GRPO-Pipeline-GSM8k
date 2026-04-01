@@ -43,13 +43,13 @@ def prepare_trl_runtime() -> list[str]:
     return issues
 
 
-def require_vllm() -> None:
-    """Raise a clear error when the configured training path requires vLLM."""
+def require_vllm(purpose: str = "runtime") -> None:
+    """Raise a clear error when the configured code path requires vLLM."""
     issue = _probe_vllm()
     if issue is None:
         return
     raise RuntimeError(
-        "Training is configured to use vLLM, but the backend is unavailable. "
-        "Disable it with --no_use_vllm or install a working Linux vLLM build. "
+        f"The configured {purpose} path requires vLLM, but the backend is unavailable. "
+        "Disable vLLM for this command or install a working Linux vLLM build. "
         f"Original issue: {issue}"
     )

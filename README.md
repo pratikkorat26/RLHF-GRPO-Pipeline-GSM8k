@@ -239,12 +239,30 @@ python train_grpo.py \
 # Evaluate a trained checkpoint or final export
 python evaluate.py \
   --model_name /data/cmpe258-sp24/pratikkorat/models/grpo \
-  --num_samples 8 \
+  --eval_backend vllm \
+  --batch_size 32 \
   --output_dir /data/cmpe258-sp24/pratikkorat/models/eval
+
+# Evaluate the full test split; omit --num_samples for a full-dataset run
+python evaluate.py \
+  --model_name /data/cmpe258-sp24/pratikkorat/models/grpo \
+  --eval_backend vllm \
+  --batch_size 64 \
+  --output_dir /data/cmpe258-sp24/pratikkorat/models/eval_full
+
+# Transformers fallback for debugging or backend comparison
+python evaluate.py \
+  --model_name /data/cmpe258-sp24/pratikkorat/models/grpo \
+  --eval_backend transformers \
+  --num_samples 8 \
+  --batch_size 8 \
+  --output_dir /data/cmpe258-sp24/pratikkorat/models/eval_transformers
 ```
 
 Training defaults to `report_to=none`, so no tracker login is required. GRPO
 training also defaults to `vllm` generation on the supported Linux/HPC path.
+Evaluation also defaults to the `vllm` backend on Linux/HPC. Leave
+`--num_samples` unset to evaluate the full selected split.
 
 If you need a scheduler wrapper, a minimal single-GPU job script looks like:
 

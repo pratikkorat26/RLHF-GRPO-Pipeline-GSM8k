@@ -50,6 +50,17 @@ def _best_attn_impl() -> str:
         return "eager"
 
 
+def load_tokenizer(model_name: str) -> AutoTokenizer:
+    """Load a tokenizer with padding defaults suitable for text generation."""
+    logger.info(f"Loading tokenizer: {model_name}")
+    tokenizer = AutoTokenizer.from_pretrained(model_name)
+    if tokenizer.pad_token is None:
+        tokenizer.pad_token = tokenizer.eos_token
+        logger.info("pad_token set to eos_token")
+    tokenizer.padding_side = "left"
+    return tokenizer
+
+
 def load_model_and_tokenizer(
     model_name: str,
     device_map: str | dict | None = None,

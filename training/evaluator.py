@@ -1,12 +1,12 @@
 """
 Pass-0 baseline evaluation (inference only, no gradients).
 
-Loads the base model, runs greedy decoding on the test split, scores
-each completion with the existing reward functions, and saves a JSON
-report. This gives a pre-training baseline before any GRPO fine-tuning.
+Supports two backends:
+  - transformers: compatibility path using model.generate()
+  - vllm: fast Linux/HPC path for single-GPU inference
 
-Public API:
-    run_evaluation(cfg: EvalConfig) -> EvalResults
+Both backends feed the same scoring and reporting pipeline so output shape and
+metric semantics stay stable.
 """
 
 from __future__ import annotations
@@ -19,53 +19,197 @@ from collections import defaultdict
 from dataclasses import asdict, dataclass
 from datetime import datetime, timezone
 from pathlib import Path
+from typing import Iterable
 
 import torch
-from torch.utils.data import DataLoader
 
-from data.dataloader import GRPODataset, build_dataloader
+from data.dataloader import GRPODataset, GRPOCollator
 from project_paths import configure_runtime_environment
 from reward import composite_reward, exact_match_reward, format_reward
 from training.config import EvalConfig
-from training.model import load_model_and_tokenizer
+from training.model import load_model_and_tokenizer, load_tokenizer
+from training.runtime_compat import require_vllm
 
 logger = logging.getLogger("gsm8k_grpo.evaluator")
 
-
-# ---------------------------------------------------------------------------
-# Result container
-# ---------------------------------------------------------------------------
 
 @dataclass
 class EvalResults:
     model_name: str
     split: str
     num_samples: int
-    exact_match_accuracy: float     # fraction of examples with correct answer
-    mean_composite_reward: float    # averaged composite_reward over all samples
-    mean_format_reward: float       # averaged format_reward over all samples
-    by_difficulty: dict             # {"easy": {"n": int, "accuracy": float, "mean_reward": float}}
+    exact_match_accuracy: float
+    mean_composite_reward: float
+    mean_format_reward: float
+    by_difficulty: dict
     timestamp: str
 
 
-# ---------------------------------------------------------------------------
-# Core evaluation loop
-# ---------------------------------------------------------------------------
+@dataclass
+class _EvalExample:
+    prompt: str
+    reference_answer: str
+    metadata: dict
+
+
+class _EvalAccumulator:
+    def __init__(self) -> None:
+        self.num_samples = 0
+        self.exact_match_sum = 0.0
+        self.composite_sum = 0.0
+        self.format_sum = 0.0
+        self.by_difficulty: dict[str, dict[str, float | int]] = defaultdict(
+            lambda: {"n": 0, "exact_match_sum": 0.0, "reward_sum": 0.0}
+        )
+
+    def add(self, completion: str, reference: str, metadata: dict) -> None:
+        exact = exact_match_reward(completion, reference)
+        composite = composite_reward(completion, reference)
+        fmt = format_reward(completion)
+        difficulty = metadata.get("difficulty", "unknown")
+
+        self.num_samples += 1
+        self.exact_match_sum += exact
+        self.composite_sum += composite
+        self.format_sum += fmt
+        bucket = self.by_difficulty[difficulty]
+        bucket["n"] += 1
+        bucket["exact_match_sum"] += exact
+        bucket["reward_sum"] += composite
+
+    def finalize(self, model_name: str, split: str) -> EvalResults:
+        n = max(self.num_samples, 1)
+        by_difficulty = {
+            difficulty: {
+                "n": values["n"],
+                "accuracy": values["exact_match_sum"] / max(values["n"], 1),
+                "mean_reward": values["reward_sum"] / max(values["n"], 1),
+            }
+            for difficulty, values in self.by_difficulty.items()
+        }
+        return EvalResults(
+            model_name=model_name,
+            split=split,
+            num_samples=self.num_samples,
+            exact_match_accuracy=self.exact_match_sum / n,
+            mean_composite_reward=self.composite_sum / n,
+            mean_format_reward=self.format_sum / n,
+            by_difficulty=by_difficulty,
+            timestamp=datetime.now(timezone.utc).isoformat(),
+        )
+
+
+def _prepare_examples(cfg: EvalConfig, tokenizer) -> list[_EvalExample]:
+    hf_jsonl_path = Path(cfg.dataset_path) / "jsonl" / f"{cfg.split}.jsonl"
+    dataset = GRPODataset.from_jsonl(str(hf_jsonl_path))
+    records = dataset.records
+
+    if cfg.num_samples is not None:
+        records = records[: min(cfg.num_samples, len(records))]
+        logger.info("Subsampled to %s examples", len(records))
+
+    collator = GRPOCollator(
+        tokenizer=tokenizer,
+        max_prompt_length=cfg.max_prompt_length,
+    )
+    examples = [
+        _EvalExample(
+            prompt=collator._format_prompt(record["prompt_messages"]),
+            reference_answer=record["reference_answer"],
+            metadata=record.get("metadata", {}),
+        )
+        for record in records
+    ]
+    logger.info("Prepared %s prompts for evaluation", len(examples))
+    return examples
+
+
+def _batched_examples(
+    examples: list[_EvalExample], batch_size: int
+) -> Iterable[list[_EvalExample]]:
+    for start in range(0, len(examples), batch_size):
+        yield examples[start : start + batch_size]
+
+
+def _run_vllm_evaluation(
+    cfg: EvalConfig,
+    examples: list[_EvalExample],
+) -> _EvalAccumulator:
+    require_vllm("evaluation")
+    from vllm import LLM, SamplingParams
+
+    llm = LLM(
+        model=cfg.model_name,
+        trust_remote_code=True,
+    )
+    sampling_params = SamplingParams(
+        temperature=cfg.temperature,
+        max_tokens=cfg.max_new_tokens,
+    )
+
+    accumulator = _EvalAccumulator()
+    for batch_idx, batch in enumerate(_batched_examples(examples, cfg.batch_size), start=1):
+        prompts = [item.prompt for item in batch]
+        outputs = llm.generate(prompts, sampling_params, use_tqdm=False)
+        for example, output in zip(batch, outputs):
+            completion = output.outputs[0].text if output.outputs else ""
+            accumulator.add(completion, example.reference_answer, example.metadata)
+
+        if batch_idx % 10 == 0 or accumulator.num_samples == len(examples):
+            logger.info("  [%s/%s] records evaluated", accumulator.num_samples, len(examples))
+
+    return accumulator
+
+
+def _run_transformers_evaluation(
+    cfg: EvalConfig,
+    tokenizer,
+    examples: list[_EvalExample],
+) -> _EvalAccumulator:
+    model, _ = load_model_and_tokenizer(cfg.model_name)
+    model.eval()
+
+    accumulator = _EvalAccumulator()
+    for batch in _batched_examples(examples, cfg.batch_size):
+        prompts = [example.prompt for example in batch]
+        encodings = tokenizer(
+            prompts,
+            padding=True,
+            truncation=True,
+            max_length=cfg.max_prompt_length,
+            return_tensors="pt",
+        )
+        input_ids = encodings["input_ids"].to(model.device)
+        attention_mask = encodings["attention_mask"].to(model.device)
+
+        with torch.no_grad():
+            output_ids = model.generate(
+                input_ids=input_ids,
+                attention_mask=attention_mask,
+                max_new_tokens=cfg.max_new_tokens,
+                do_sample=(cfg.temperature > 0.0),
+                temperature=cfg.temperature if cfg.temperature > 0.0 else None,
+                pad_token_id=tokenizer.pad_token_id,
+            )
+
+        completion_ids = output_ids[:, input_ids.shape[1] :]
+        completions = tokenizer.batch_decode(completion_ids, skip_special_tokens=True)
+        for completion, example in zip(completions, batch):
+            accumulator.add(completion, example.reference_answer, example.metadata)
+
+        if accumulator.num_samples % max(cfg.batch_size * 10, 1) == 0:
+            logger.info("  [%s/%s] records evaluated", accumulator.num_samples, len(examples))
+
+    return accumulator
+
 
 def run_evaluation(cfg: EvalConfig) -> EvalResults:
-    """Run pass-0 evaluation: load model → generate → score → save JSON.
-
-    Args:
-        cfg: Frozen EvalConfig.
-
-    Returns:
-        EvalResults with accuracy and reward statistics.
-    """
     logger.info("=" * 60)
     logger.info("Pass-0 Evaluation")
-    logger.info(f"  model    : {cfg.model_name}")
-    logger.info(f"  split    : {cfg.split}")
-    logger.info(f"  samples  : {cfg.num_samples or 'all'}")
+    logger.info("  model    : %s", cfg.model_name)
+    logger.info("  split    : %s", cfg.split)
+    logger.info("  backend  : %s", cfg.eval_backend)
+    logger.info("  samples  : %s", cfg.num_samples or "all")
     logger.info("=" * 60)
 
     runtime_env = configure_runtime_environment(
@@ -82,112 +226,22 @@ def run_evaluation(cfg: EvalConfig) -> EvalResults:
     torch.manual_seed(cfg.seed)
     random.seed(cfg.seed)
 
-    # --- 1. Load model & tokenizer ---
-    model, tokenizer = load_model_and_tokenizer(cfg.model_name)
-    model.eval()
+    tokenizer = load_tokenizer(cfg.model_name)
+    examples = _prepare_examples(cfg, tokenizer)
 
-    # --- 2. Load dataset ---
-    hf_jsonl_path = Path(cfg.dataset_path) / "jsonl" / f"{cfg.split}.jsonl"
-    dataset = GRPODataset.from_jsonl(str(hf_jsonl_path))
+    if cfg.eval_backend == "vllm":
+        accumulator = _run_vllm_evaluation(cfg, examples)
+    else:
+        accumulator = _run_transformers_evaluation(cfg, tokenizer, examples)
 
-    if cfg.num_samples is not None:
-        indices = list(range(min(cfg.num_samples, len(dataset))))
-        dataset = GRPODataset([dataset[i] for i in indices])
-        logger.info(f"Subsampled to {len(dataset)} examples")
-
-    loader: DataLoader = build_dataloader(
-        dataset,
-        tokenizer,
-        batch_size=cfg.batch_size,
-        shuffle=False,
-        num_workers=cfg.num_workers,
-        max_prompt_length=512,
-        pin_memory=torch.cuda.is_available(),
-    )
-
-    # --- 3. Generate & score ---
-    per_sample: list[dict] = []
-
-    for batch_idx, batch in enumerate(loader):
-        input_ids = batch["input_ids"].to(model.device)
-        attention_mask = batch["attention_mask"].to(model.device)
-        references: list[str] = batch["reference_answers"]
-        metadata_list: list[dict] = batch["metadata"]
-        prompt_strings: list[str] = batch["prompt_strings"]
-
-        with torch.no_grad():
-            output_ids = model.generate(
-                input_ids=input_ids,
-                attention_mask=attention_mask,
-                max_new_tokens=cfg.max_new_tokens,
-                do_sample=(cfg.temperature > 0.0),
-                temperature=cfg.temperature if cfg.temperature > 0.0 else None,
-                pad_token_id=tokenizer.pad_token_id,
-            )
-
-        # Slice off the prompt tokens — keep only the generated part
-        completion_ids = output_ids[:, input_ids.shape[1]:]
-        completions = tokenizer.batch_decode(completion_ids, skip_special_tokens=True)
-
-        for completion, reference, meta in zip(completions, references, metadata_list):
-            em = exact_match_reward(completion, reference)
-            cr = composite_reward(completion, reference)
-            fr = format_reward(completion)
-            difficulty = meta.get("difficulty", "unknown")
-
-            per_sample.append({
-                "exact_match": em,
-                "composite_reward": cr,
-                "format_reward": fr,
-                "difficulty": difficulty,
-            })
-
-        if (batch_idx + 1) % 10 == 0:
-            done = (batch_idx + 1) * cfg.batch_size
-            logger.info(f"  [{done}/{len(dataset)}] batches evaluated")
-
-    # --- 4. Aggregate ---
-    n = len(per_sample)
-    accuracy = sum(s["exact_match"] for s in per_sample) / max(n, 1)
-    mean_composite = sum(s["composite_reward"] for s in per_sample) / max(n, 1)
-    mean_format = sum(s["format_reward"] for s in per_sample) / max(n, 1)
-
-    # Per-difficulty breakdown
-    by_diff: dict[str, dict] = defaultdict(lambda: {"n": 0, "exact_match_sum": 0.0, "reward_sum": 0.0})
-    for s in per_sample:
-        d = s["difficulty"]
-        by_diff[d]["n"] += 1
-        by_diff[d]["exact_match_sum"] += s["exact_match"]
-        by_diff[d]["reward_sum"] += s["composite_reward"]
-
-    by_difficulty = {
-        d: {
-            "n": v["n"],
-            "accuracy": v["exact_match_sum"] / max(v["n"], 1),
-            "mean_reward": v["reward_sum"] / max(v["n"], 1),
-        }
-        for d, v in by_diff.items()
-    }
-
-    results = EvalResults(
-        model_name=cfg.model_name,
-        split=cfg.split,
-        num_samples=n,
-        exact_match_accuracy=accuracy,
-        mean_composite_reward=mean_composite,
-        mean_format_reward=mean_format,
-        by_difficulty=by_difficulty,
-        timestamp=datetime.now(timezone.utc).isoformat(),
-    )
-
-    # --- 5. Save JSON report ---
+    results = accumulator.finalize(cfg.model_name, cfg.split)
     report_path = Path(cfg.output_dir) / "eval_results.json"
     report_path.write_text(
         json.dumps(asdict(results), indent=2, ensure_ascii=False),
         encoding="utf-8",
     )
 
-    logger.info(f"Exact-match accuracy : {accuracy:.2%}")
-    logger.info(f"Mean composite reward: {mean_composite:.4f}")
-    logger.info(f"Report saved to      : {report_path}")
+    logger.info("Exact-match accuracy : %.2f%%", results.exact_match_accuracy * 100.0)
+    logger.info("Mean composite reward: %.4f", results.mean_composite_reward)
+    logger.info("Report saved to      : %s", report_path)
     return results

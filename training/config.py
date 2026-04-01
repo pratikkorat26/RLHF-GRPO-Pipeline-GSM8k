@@ -73,9 +73,11 @@ class EvalConfig:
     torch_home: str = field(default_factory=default_torch_home)
     hf_home: str = field(default_factory=default_hf_home)
 
+    eval_backend: str = "vllm"
     num_samples: int | None = None  # None = full split
-    batch_size: int = 4
+    batch_size: int = 32
+    max_prompt_length: int = 512
     max_new_tokens: int = 512
     temperature: float = 0.0        # 0.0 = greedy decoding
-    num_workers: int = 0            # dataloader workers; >0 overlaps tokenization with GPU
+    num_workers: int = 4            # dataloader workers; >0 overlaps tokenization with GPU
     seed: int = 42
