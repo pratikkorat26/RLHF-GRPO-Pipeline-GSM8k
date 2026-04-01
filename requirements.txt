@@ -1,0 +1,8 @@
+# ── Core ML stack ─────────────────────────────────────────────────────────────
+# torch is NOT listed here — install it first via the CUDA index:
+#   uv pip install torch --index-url https://download.pytorch.org/whl/cu121
+transformers
+datasets
+accelerate
+trl
+tqdm
