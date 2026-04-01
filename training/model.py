@@ -61,7 +61,9 @@ def _best_attn_impl() -> str:
 
 def _looks_like_local_path(model_name: str) -> bool:
     path = Path(model_name)
-    return path.is_absolute() or path.exists() or any(sep in model_name for sep in ("/", "\\"))
+    if path.is_absolute() or path.exists():
+        return True
+    return model_name.startswith(("./", "../", ".\\", "..\\"))
 
 
 def _resolve_model_source(model_name: str) -> tuple[str, Path | None]:
