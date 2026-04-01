@@ -61,6 +61,30 @@ python -m pytest tests/ -v
 The commands above are the supported Linux path. Hugging Face and Torch caches
 are expected to be configured externally on the target machine.
 
+By default, the project now assumes the following Linux storage root:
+
+```bash
+/data/cmpe258-sp24/pratikkorat
+```
+
+Default runtime paths derived from that root:
+
+```bash
+TORCH_HOME=/data/cmpe258-sp24/pratikkorat/.cache/torch
+HF_HOME=/data/cmpe258-sp24/pratikkorat/.cache/huggingface
+HF_DATASETS_CACHE=/data/cmpe258-sp24/pratikkorat/.cache/huggingface/datasets
+TRANSFORMERS_CACHE=/data/cmpe258-sp24/pratikkorat/.cache/huggingface/hub
+VLLM_CACHE_ROOT=/data/cmpe258-sp24/pratikkorat/.cache/vllm
+TRITON_CACHE_DIR=/data/cmpe258-sp24/pratikkorat/.cache/triton
+TMPDIR=/data/cmpe258-sp24/pratikkorat/tmp
+dataset artifacts=/data/cmpe258-sp24/pratikkorat/data/grpo
+training outputs=/data/cmpe258-sp24/pratikkorat/models/grpo
+evaluation outputs=/data/cmpe258-sp24/pratikkorat/models/eval
+venv=/data/cmpe258-sp24/pratikkorat/venvs/gsm8k-grpo
+```
+
+Set `PROJECT_STORAGE_ROOT` only if you need to override that root.
+
 ### Python API
 
 ```python
@@ -190,45 +214,33 @@ trainer = GRPOTrainer(
 ### Linux HPC Runbook
 
 ```bash
-python3.11 -m venv .venv
-source .venv/bin/activate
+python3.11 -m venv /data/cmpe258-sp24/pratikkorat/venvs/gsm8k-grpo
+source /data/cmpe258-sp24/pratikkorat/venvs/gsm8k-grpo/bin/activate
 uv pip install torch torchvision --index-url https://download.pytorch.org/whl/cu121
 uv pip install -r requirements.txt
 
-export TMPDIR=/scratch/$USER/gsm8k_grpo_tmp
-mkdir -p "$TMPDIR"
-
 # Build dataset artifacts if needed
-python -m data.pipeline --splits train test --output_dir ./data/grpo
+python -m data.pipeline
 
 # Single-GPU H100 training; vLLM is enabled by default
-python train_grpo.py \
-  --model_name Qwen/Qwen3.5-0.8B-Base \
-  --dataset_path ./data/grpo/trainer \
-  --output_dir ./output/grpo \
-  --temp_dir "$TMPDIR"
+python train_grpo.py --model_name Qwen/Qwen3.5-0.8B-Base
 
 # Resume from the latest checkpoint
 python train_grpo.py \
   --model_name Qwen/Qwen3.5-0.8B-Base \
-  --dataset_path ./data/grpo/trainer \
-  --output_dir ./output/grpo \
-  --temp_dir "$TMPDIR" \
-  --resume_from_checkpoint ./output/grpo/checkpoint-500
+  --resume_from_checkpoint /data/cmpe258-sp24/pratikkorat/models/grpo/checkpoint-500
 
 # Optional fallback path without vLLM
 python train_grpo.py \
   --model_name Qwen/Qwen3.5-0.8B-Base \
-  --dataset_path ./data/grpo/trainer \
-  --output_dir ./output/grpo_no_vllm \
+  --output_dir /data/cmpe258-sp24/pratikkorat/models/grpo_no_vllm \
   --no_use_vllm
 
 # Evaluate a trained checkpoint or final export
 python evaluate.py \
-  --model_name ./output/grpo \
-  --dataset_path ./data/grpo/trainer \
+  --model_name /data/cmpe258-sp24/pratikkorat/models/grpo \
   --num_samples 8 \
-  --output_dir ./output/eval
+  --output_dir /data/cmpe258-sp24/pratikkorat/models/eval
 ```
 
 Training defaults to `report_to=none`, so no tracker login is required. GRPO
@@ -244,13 +256,8 @@ If you need a scheduler wrapper, a minimal single-GPU job script looks like:
 #SBATCH --mem=64G
 #SBATCH --time=08:00:00
 
-source .venv/bin/activate
-export TMPDIR=/scratch/$USER/gsm8k_grpo_tmp
-mkdir -p "$TMPDIR"
+source /data/cmpe258-sp24/pratikkorat/venvs/gsm8k-grpo/bin/activate
 
 python train_grpo.py \
-  --model_name Qwen/Qwen3.5-0.8B-Base \
-  --dataset_path ./data/grpo/trainer \
-  --output_dir ./output/grpo \
-  --temp_dir "$TMPDIR"
+  --model_name Qwen/Qwen3.5-0.8B-Base
 ```

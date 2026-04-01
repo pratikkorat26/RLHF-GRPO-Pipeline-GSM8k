@@ -3,6 +3,8 @@ Central configuration for the GSM8K GRPO data and reward pipeline.
 """
 from dataclasses import asdict, dataclass, field
 
+from project_paths import default_pipeline_output_dir
+
 
 @dataclass(frozen=True)
 class RewardConfig:
@@ -24,7 +26,7 @@ class RewardConfig:
 @dataclass(frozen=True)
 class PipelineConfig:
     splits: list[str] = field(default_factory=lambda: ["train", "test"])
-    output_dir: str = "./data/grpo"
+    output_dir: str = field(default_factory=default_pipeline_output_dir)
     system_prompt: str = (
         "You are a helpful math tutor. "
         "Solve each problem step by step, showing your full reasoning. "

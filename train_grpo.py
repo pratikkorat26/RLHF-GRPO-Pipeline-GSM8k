@@ -32,6 +32,8 @@ def parse_args() -> TrainingConfig:
     p.add_argument("--dataset_path", default=defaults.dataset_path)
     p.add_argument("--output_dir", default=defaults.output_dir)
     p.add_argument("--temp_dir", default=defaults.temp_dir)
+    p.add_argument("--torch_home", default=defaults.torch_home)
+    p.add_argument("--hf_home", default=defaults.hf_home)
 
     # GRPO algorithm
     p.add_argument("--num_generations", type=int, default=defaults.num_generations,
@@ -69,6 +71,8 @@ def parse_args() -> TrainingConfig:
         dataset_path=args.dataset_path,
         output_dir=args.output_dir,
         temp_dir=args.temp_dir,
+        torch_home=args.torch_home,
+        hf_home=args.hf_home,
         num_generations=args.num_generations,
         beta=args.beta,
         use_vllm=args.use_vllm,

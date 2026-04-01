@@ -12,9 +12,9 @@ TRL's GRPOTrainer. Three public functions:
 from __future__ import annotations
 
 import logging
-import os
 from pathlib import Path
 
+from project_paths import configure_runtime_environment
 from training.config import TrainingConfig
 from training.model import load_model_and_tokenizer
 from training.runtime_compat import prepare_trl_runtime, require_vllm
@@ -199,12 +199,15 @@ def run_training(cfg: TrainingConfig) -> None:
     output_dir = Path(cfg.output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
 
-    if cfg.temp_dir:
-        temp_dir = Path(cfg.temp_dir)
-        temp_dir.mkdir(parents=True, exist_ok=True)
-        os.environ["TMPDIR"] = str(temp_dir)
-        os.environ["TMP"] = str(temp_dir)
-        os.environ["TEMP"] = str(temp_dir)
+    runtime_env = configure_runtime_environment(
+        temp_dir=cfg.temp_dir,
+        torch_home=cfg.torch_home,
+        hf_home=cfg.hf_home,
+    )
+    logger.info("  tmpdir    : %s", runtime_env["TMPDIR"])
+    logger.info("  torchhome : %s", runtime_env["TORCH_HOME"])
+    logger.info("  hf_home   : %s", runtime_env["HF_HOME"])
+    logger.info("  vllmcache : %s", runtime_env["VLLM_CACHE_ROOT"])
 
     if cfg.use_vllm:
         require_vllm()

@@ -15,6 +15,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+from project_paths import configure_runtime_environment
+
 warnings.filterwarnings("ignore", category=UserWarning, module="requests")
 warnings.filterwarnings("ignore", message=".*urllib3.*")
 warnings.filterwarnings("ignore", message=".*chardet.*")
@@ -533,6 +535,7 @@ def build_pipeline(
     source_dataset_config: str = "main",
 ) -> DatasetDict:
     _require_datasets()
+    configure_runtime_environment()
     cfg = PipelineConfig(
         splits=splits,
         output_dir=output_dir,
@@ -636,6 +639,7 @@ def _print_summary(dd: DatasetDict, split_reports: dict[str, dict]) -> None:
 
 
 def parse_args() -> argparse.Namespace:
+    defaults = PipelineConfig()
     p = argparse.ArgumentParser(description="GSM8K -> GRPO data pipeline")
     p.add_argument(
         "--splits",
@@ -643,7 +647,7 @@ def parse_args() -> argparse.Namespace:
         default=["train", "test"],
         help="Dataset splits to process",
     )
-    p.add_argument("--output_dir", default="./data/grpo", help="Root output directory")
+    p.add_argument("--output_dir", default=defaults.output_dir, help="Root output directory")
     p.add_argument(
         "--system_prompt",
         default=DEFAULT_SYSTEM_PROMPT,

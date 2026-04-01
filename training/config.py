@@ -7,7 +7,16 @@ trainer.py and evaluator.py; override defaults via the CLI entry points.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
+
+from project_paths import (
+    default_eval_output_dir,
+    default_hf_home,
+    default_temp_dir,
+    default_torch_home,
+    default_training_dataset_path,
+    default_training_output_dir,
+)
 
 
 @dataclass(frozen=True)
@@ -16,9 +25,11 @@ class TrainingConfig:
 
     # --- model & data ---
     model_name: str = "Qwen/Qwen3.5-0.8B-Base"
-    dataset_path: str = "./data/grpo/trainer"
-    output_dir: str = "./output/grpo"
-    temp_dir: str | None = None
+    dataset_path: str = field(default_factory=default_training_dataset_path)
+    output_dir: str = field(default_factory=default_training_output_dir)
+    temp_dir: str = field(default_factory=default_temp_dir)
+    torch_home: str = field(default_factory=default_torch_home)
+    hf_home: str = field(default_factory=default_hf_home)
 
     # --- GRPO algorithm ---
     num_generations: int = 4    # G: completions sampled per prompt per step
@@ -55,9 +66,12 @@ class EvalConfig:
     """Configuration for a pass-0 (inference-only) evaluation run."""
 
     model_name: str = "Qwen/Qwen3.5-0.8B-Base"
-    dataset_path: str = "./data/grpo/trainer"
+    dataset_path: str = field(default_factory=default_training_dataset_path)
     split: str = "test"
-    output_dir: str = "./output/eval"
+    output_dir: str = field(default_factory=default_eval_output_dir)
+    temp_dir: str = field(default_factory=default_temp_dir)
+    torch_home: str = field(default_factory=default_torch_home)
+    hf_home: str = field(default_factory=default_hf_home)
 
     num_samples: int | None = None  # None = full split
     batch_size: int = 4

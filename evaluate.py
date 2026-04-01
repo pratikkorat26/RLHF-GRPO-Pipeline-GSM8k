@@ -32,6 +32,9 @@ def parse_args() -> EvalConfig:
                    help="Path to data/grpo/trainer artifact directory")
     p.add_argument("--split", default=defaults.split, choices=["train", "test"])
     p.add_argument("--output_dir", default=defaults.output_dir)
+    p.add_argument("--temp_dir", default=defaults.temp_dir)
+    p.add_argument("--torch_home", default=defaults.torch_home)
+    p.add_argument("--hf_home", default=defaults.hf_home)
     p.add_argument("--num_samples", type=int, default=defaults.num_samples,
                    help="Number of examples to evaluate (default: all)")
     p.add_argument("--batch_size", type=int, default=defaults.batch_size)
@@ -46,6 +49,9 @@ def parse_args() -> EvalConfig:
         dataset_path=args.dataset_path,
         split=args.split,
         output_dir=args.output_dir,
+        temp_dir=args.temp_dir,
+        torch_home=args.torch_home,
+        hf_home=args.hf_home,
         num_samples=args.num_samples,
         batch_size=args.batch_size,
         max_new_tokens=args.max_new_tokens,

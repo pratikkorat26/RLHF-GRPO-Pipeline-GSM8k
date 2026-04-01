@@ -24,6 +24,7 @@ import torch
 from torch.utils.data import DataLoader
 
 from data.dataloader import GRPODataset, build_dataloader
+from project_paths import configure_runtime_environment
 from reward import composite_reward, exact_match_reward, format_reward
 from training.config import EvalConfig
 from training.model import load_model_and_tokenizer
@@ -66,6 +67,16 @@ def run_evaluation(cfg: EvalConfig) -> EvalResults:
     logger.info(f"  split    : {cfg.split}")
     logger.info(f"  samples  : {cfg.num_samples or 'all'}")
     logger.info("=" * 60)
+
+    runtime_env = configure_runtime_environment(
+        temp_dir=cfg.temp_dir,
+        torch_home=cfg.torch_home,
+        hf_home=cfg.hf_home,
+    )
+    logger.info("  tmpdir   : %s", runtime_env["TMPDIR"])
+    logger.info("  torchhome: %s", runtime_env["TORCH_HOME"])
+    logger.info("  hf_home  : %s", runtime_env["HF_HOME"])
+    logger.info("  vllmcache: %s", runtime_env["VLLM_CACHE_ROOT"])
 
     os.makedirs(cfg.output_dir, exist_ok=True)
     torch.manual_seed(cfg.seed)
