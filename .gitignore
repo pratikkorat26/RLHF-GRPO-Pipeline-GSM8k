@@ -1,0 +1,20 @@
+# Python cache/runtime artifacts
+__pycache__/
+*.py[cod]
+.pytest_cache/
+
+# Local environments
+.venv/
+
+# IDE/editor state
+.idea/
+
+# OS-generated files
+.DS_Store
+Thumbs.db
+
+# Generated datasets/artifacts
+data/grpo/
+
+# Training/evaluation outputs
+output/
