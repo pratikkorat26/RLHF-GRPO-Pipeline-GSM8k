@@ -1,0 +1,95 @@
+"""
+Model and tokenizer loading utilities.
+
+Single responsibility: load a causal LM and its tokenizer with the
+settings required for GRPO (left-padding, pad-token fallback, dtype).
+All other concerns (training loop, evaluation) live elsewhere.
+"""
+
+from __future__ import annotations
+
+import logging
+import sys
+import types
+
+import torch
+
+# ---------------------------------------------------------------------------
+# Torchvision ABI guard
+# ---------------------------------------------------------------------------
+# Some virtualenvs (e.g. vllm-engine) ship a torchvision build that is ABI-
+# incompatible with the installed torch.  Loading it raises:
+#   RuntimeError: operator torchvision::nms does not exist
+# Transformers' image_utils.py calls torchvision.transforms at import time,
+# which triggers the crash even for pure text models.
+# Fix: if torchvision is broken, replace it with an empty stub so that
+# `transformers.utils.is_torchvision_available()` returns False and the
+# vision import path is never taken.
+if "torchvision" not in sys.modules:
+    try:
+        import torchvision as _tv  # noqa: F401
+    except (RuntimeError, OSError):
+        # Insert a minimal stub so subsequent `import torchvision` succeeds
+        # without triggering the broken native extension.
+        _stub = types.ModuleType("torchvision")
+        _stub.__version__ = "0.0.0+stub"
+        sys.modules["torchvision"] = _stub
+        sys.modules["torchvision.transforms"] = types.ModuleType("torchvision.transforms")
+
+from transformers import AutoModelForCausalLM, AutoTokenizer
+
+logger = logging.getLogger("gsm8k_grpo.model")
+
+
+def _best_attn_impl() -> str:
+    """Return flash_attention_2 if flash-attn is installed, else eager."""
+    try:
+        import flash_attn  # noqa: F401
+        return "flash_attention_2"
+    except ImportError:
+        return "eager"
+
+
+def load_model_and_tokenizer(
+    model_name: str,
+    device_map: str = "auto",
+    torch_dtype: torch.dtype = torch.bfloat16,
+    attn_implementation: str | None = None,
+) -> tuple[AutoModelForCausalLM, AutoTokenizer]:
+    """Load a causal LM and tokenizer ready for GRPO training or evaluation.
+
+    Args:
+        model_name: HuggingFace model ID or local path.
+        device_map: "auto" distributes layers across available devices.
+        torch_dtype: Weight precision. bfloat16 recommended for modern GPUs.
+        attn_implementation: "flash_attention_2" or "eager". None = auto-detect
+            (uses flash_attention_2 if flash-attn is installed, else eager).
+
+    Returns:
+        (model, tokenizer) tuple.
+    """
+    impl = attn_implementation or _best_attn_impl()
+
+    logger.info(f"Loading tokenizer: {model_name}")
+    tokenizer = AutoTokenizer.from_pretrained(model_name)
+
+    # Qwen base models ship without a dedicated pad token — use eos instead.
+    if tokenizer.pad_token is None:
+        tokenizer.pad_token = tokenizer.eos_token
+        logger.info("pad_token set to eos_token")
+
+    # Left-padding is required for decoder-only generation so that all
+    # completions in a batch start at the same relative position.
+    tokenizer.padding_side = "left"
+
+    logger.info(f"Loading model: {model_name}  dtype={torch_dtype}  attn={impl}  device_map={device_map}")
+    model = AutoModelForCausalLM.from_pretrained(
+        model_name,
+        dtype=torch_dtype,
+        device_map=device_map,
+        attn_implementation=impl,
+    )
+
+    n_params = sum(p.numel() for p in model.parameters()) / 1e6
+    logger.info(f"Model loaded — {n_params:.1f}M parameters")
+    return model, tokenizer

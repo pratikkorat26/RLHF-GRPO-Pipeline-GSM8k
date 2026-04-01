@@ -124,3 +124,80 @@ advantages = compute_grpo_advantages(rewards)  # zero-mean, unit-std
 | `soft_numeric_reward` | 0.3 | Closeness (exponential penalty) |
 | `format_reward` | 0.2 | Presence of `####` + step-by-step lines |
 | `length_penalty` | 0.1 | Avoids too-short or too-long responses |
+
+---
+
+## TRL Integration
+
+This package integrates with HuggingFace's [TRL](https://huggingface.co/docs/trl) library for GRPO training.
+
+### Quick Start
+
+```python
+from datasets import Dataset
+from trl import GRPOTrainer, GRPOConfig
+from trl_grpo import exact_match_reward_func, soft_numeric_reward_func, format_reward_func
+
+dataset = Dataset.from_list([
+    {"prompt": "What is 2+2?", "reference_answer": "4"},
+    {"prompt": "What is 5*3?", "reference_answer": "15"},
+])
+
+training_args = GRPOConfig(
+    output_dir="./grpo_output",
+    per_device_train_batch_size=4,
+    num_generations=4,
+    max_completion_length=512,
+)
+
+trainer = GRPOTrainer(
+    model="Qwen/Qwen2-0.5B-Instruct",
+    args=training_args,
+    reward_funcs=[
+        exact_match_reward_func,
+        soft_numeric_reward_func,
+        format_reward_func,
+    ],
+    train_dataset=dataset,
+)
+
+trainer.train()
+```
+
+### Using Composite Reward
+
+```python
+from trl import GRPOTrainer, GRPOConfig
+from trl_grpo import create_reward_func, RewardWeights
+
+custom_weights = RewardWeights(
+    exact_match=1.0,
+    soft_numeric=0.3,
+    format=0.2,
+    length=0.1,
+)
+
+trainer = GRPOTrainer(
+    model="Qwen/Qwen2-0.5B-Instruct",
+    reward_funcs=create_reward_func(weights=custom_weights, soft_k=0.1),
+    train_dataset=dataset,
+)
+```
+
+### Run Training
+
+```bash
+pip install -r requirements.txt
+
+# Single GPU
+python train_grpo.py
+
+# Multi-GPU (recommended for GRPO)
+accelerate launch train_grpo.py
+```
+
+Training defaults to local TRL generation with `report_to=none`, so no
+`trackio` login or external tracker setup is required.
+
+Optional acceleration/backends such as `vllm` are environment-specific and are
+not part of the default project path.

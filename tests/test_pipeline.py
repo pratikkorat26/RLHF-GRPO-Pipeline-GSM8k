@@ -1,6 +1,9 @@
 import json
+import shutil
 import tempfile
 import unittest
+import uuid
+from contextlib import contextmanager
 from pathlib import Path
 from unittest.mock import patch
 
@@ -39,6 +42,25 @@ from reward import (
     reward_contract_dict,
     soft_numeric_reward,
 )
+
+TEST_TEMP_ROOT = Path(__file__).resolve().parents[1] / ".tmp" / "test_runs"
+
+
+@contextmanager
+def managed_tempdir():
+    """Create a writable temp directory under the workspace.
+
+    Python's TemporaryDirectory() in the current Windows torch env creates
+    directories that cannot be nested into reliably, so tests allocate under a
+    normal workspace folder instead.
+    """
+    TEST_TEMP_ROOT.mkdir(parents=True, exist_ok=True)
+    path = TEST_TEMP_ROOT / f"case-{uuid.uuid4().hex}"
+    path.mkdir()
+    try:
+        yield str(path)
+    finally:
+        shutil.rmtree(path, ignore_errors=True)
 
 
 class TestNormaliseNumeric(unittest.TestCase):
@@ -244,7 +266,7 @@ class TestBuildPipeline(unittest.TestCase):
         return Dataset.from_list(rows)
 
     def test_build_pipeline_writes_artifacts_and_reports(self):
-        with tempfile.TemporaryDirectory() as tmpdir:
+        with managed_tempdir() as tmpdir:
             with patch("data.pipeline.load_gsm8k", side_effect=self._fake_loader):
                 dd = build_pipeline(
                     splits=["train", "test"],
@@ -296,7 +318,7 @@ class TestBuildPipeline(unittest.TestCase):
             rows = [{"question": "Same question?", "answer": "Work.\n#### 1"}]
             return Dataset.from_list(rows)
 
-        with tempfile.TemporaryDirectory() as tmpdir:
+        with managed_tempdir() as tmpdir:
             with patch("data.pipeline.load_gsm8k", side_effect=dup_loader):
                 with self.assertRaises(PipelineValidationError):
                     build_pipeline(
@@ -310,7 +332,7 @@ class TestBuildPipeline(unittest.TestCase):
             rows = [{"question": "Broken", "answer": "No marker"}]
             return Dataset.from_list(rows)
 
-        with tempfile.TemporaryDirectory() as tmpdir:
+        with managed_tempdir() as tmpdir:
             with patch("data.pipeline.load_gsm8k", side_effect=bad_loader):
                 with self.assertRaises(PipelineValidationError):
                     build_pipeline(
@@ -326,7 +348,7 @@ class TestBuildPipeline(unittest.TestCase):
         def long_loader(split, **_):
             return Dataset.from_list(long_rows)
 
-        with tempfile.TemporaryDirectory() as tmpdir:
+        with managed_tempdir() as tmpdir:
             with patch("data.pipeline.load_gsm8k", side_effect=long_loader):
                 with self.assertRaises(PipelineValidationError):
                     build_pipeline(
@@ -338,7 +360,7 @@ class TestBuildPipeline(unittest.TestCase):
                     )
 
     def test_build_pipeline_is_logically_deterministic(self):
-        with tempfile.TemporaryDirectory() as tmpdir:
+        with managed_tempdir() as tmpdir:
             first = Path(tmpdir) / "run1"
             second = Path(tmpdir) / "run2"
             with patch("data.pipeline.load_gsm8k", side_effect=self._fake_loader):
