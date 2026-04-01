@@ -73,7 +73,6 @@ Default runtime paths derived from that root:
 TORCH_HOME=/data/cmpe258-sp24/pratikkorat/.cache/torch
 HF_HOME=/data/cmpe258-sp24/pratikkorat/.cache/huggingface
 HF_DATASETS_CACHE=/data/cmpe258-sp24/pratikkorat/.cache/huggingface/datasets
-TRANSFORMERS_CACHE=/data/cmpe258-sp24/pratikkorat/.cache/huggingface/hub
 VLLM_CACHE_ROOT=/data/cmpe258-sp24/pratikkorat/.cache/vllm
 TRITON_CACHE_DIR=/data/cmpe258-sp24/pratikkorat/.cache/triton
 TMPDIR=/data/cmpe258-sp24/pratikkorat/tmp
@@ -238,21 +237,21 @@ python train_grpo.py \
 
 # Evaluate a trained checkpoint or final export
 python evaluate.py \
-  --model_name /data/cmpe258-sp24/pratikkorat/models/grpo \
+  --model_name /data/cmpe258-sp24/pratikkorat/models/grpo/checkpoint-500 \
   --eval_backend vllm \
   --batch_size 32 \
   --output_dir /data/cmpe258-sp24/pratikkorat/models/eval
 
 # Evaluate the full test split; omit --num_samples for a full-dataset run
 python evaluate.py \
-  --model_name /data/cmpe258-sp24/pratikkorat/models/grpo \
+  --model_name /data/cmpe258-sp24/pratikkorat/models/grpo/checkpoint-500 \
   --eval_backend vllm \
   --batch_size 64 \
   --output_dir /data/cmpe258-sp24/pratikkorat/models/eval_full
 
 # Transformers fallback for debugging or backend comparison
 python evaluate.py \
-  --model_name /data/cmpe258-sp24/pratikkorat/models/grpo \
+  --model_name /data/cmpe258-sp24/pratikkorat/models/grpo/checkpoint-500 \
   --eval_backend transformers \
   --num_samples 8 \
   --batch_size 8 \
@@ -263,6 +262,9 @@ Training defaults to `report_to=none`, so no tracker login is required. GRPO
 training also defaults to `vllm` generation on the supported Linux/HPC path.
 Evaluation also defaults to the `vllm` backend on Linux/HPC. Leave
 `--num_samples` unset to evaluate the full selected split.
+For local evaluation, `--model_name` must point to a valid saved model or
+checkpoint directory containing tokenizer and model files, or to a Hugging Face
+model id.
 
 If you need a scheduler wrapper, a minimal single-GPU job script looks like:
 

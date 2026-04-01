@@ -11,6 +11,7 @@ from __future__ import annotations
 import logging
 import sys
 import types
+from pathlib import Path
 
 import torch
 
@@ -18,19 +19,14 @@ import torch
 # Torchvision ABI guard
 # ---------------------------------------------------------------------------
 # Some virtualenvs (e.g. vllm-engine) ship a torchvision build that is ABI-
-# incompatible with the installed torch.  Loading it raises:
+# incompatible with the installed torch. Loading it raises:
 #   RuntimeError: operator torchvision::nms does not exist
 # Transformers' image_utils.py calls torchvision.transforms at import time,
 # which triggers the crash even for pure text models.
-# Fix: if torchvision is broken, replace it with an empty stub so that
-# `transformers.utils.is_torchvision_available()` returns False and the
-# vision import path is never taken.
 if "torchvision" not in sys.modules:
     try:
         import torchvision as _tv  # noqa: F401
     except (RuntimeError, OSError):
-        # Insert a minimal stub so subsequent `import torchvision` succeeds
-        # without triggering the broken native extension.
         _stub = types.ModuleType("torchvision")
         _stub.__version__ = "0.0.0+stub"
         sys.modules["torchvision"] = _stub
@@ -39,6 +35,19 @@ if "torchvision" not in sys.modules:
 from transformers import AutoModelForCausalLM, AutoTokenizer
 
 logger = logging.getLogger("gsm8k_grpo.model")
+
+_TOKENIZER_FILES = (
+    "tokenizer.json",
+    "tokenizer_config.json",
+    "special_tokens_map.json",
+)
+_MODEL_FILES = (
+    "config.json",
+    "model.safetensors",
+    "pytorch_model.bin",
+    "model.safetensors.index.json",
+    "pytorch_model.bin.index.json",
+)
 
 
 def _best_attn_impl() -> str:
@@ -50,10 +59,46 @@ def _best_attn_impl() -> str:
         return "eager"
 
 
+def _looks_like_local_path(model_name: str) -> bool:
+    path = Path(model_name)
+    return path.is_absolute() or path.exists() or any(sep in model_name for sep in ("/", "\\"))
+
+
+def _resolve_model_source(model_name: str) -> tuple[str, Path | None]:
+    if not _looks_like_local_path(model_name):
+        return model_name, None
+
+    resolved = Path(model_name).expanduser()
+    if not resolved.exists():
+        raise FileNotFoundError(
+            f"Local model path does not exist: {resolved}. "
+            "Pass a valid local checkpoint/model directory or a Hugging Face model id."
+        )
+    if not resolved.is_dir():
+        raise FileNotFoundError(
+            f"Local model path is not a directory: {resolved}. "
+            "Pass a saved model/checkpoint directory."
+        )
+    return str(resolved), resolved
+
+
+def _require_local_files(model_dir: Path, required: tuple[str, ...], kind: str) -> None:
+    if any((model_dir / name).exists() for name in required):
+        return
+    raise FileNotFoundError(
+        f"Local {kind} directory is missing expected files under {model_dir}. "
+        f"Expected one of: {', '.join(required)}"
+    )
+
+
 def load_tokenizer(model_name: str) -> AutoTokenizer:
     """Load a tokenizer with padding defaults suitable for text generation."""
-    logger.info(f"Loading tokenizer: {model_name}")
-    tokenizer = AutoTokenizer.from_pretrained(model_name)
+    source, local_dir = _resolve_model_source(model_name)
+    if local_dir is not None:
+        _require_local_files(local_dir, _TOKENIZER_FILES, "tokenizer")
+
+    logger.info("Loading tokenizer: %s", source)
+    tokenizer = AutoTokenizer.from_pretrained(source)
     if tokenizer.pad_token is None:
         tokenizer.pad_token = tokenizer.eos_token
         logger.info("pad_token set to eos_token")
@@ -68,34 +113,16 @@ def load_model_and_tokenizer(
     attn_implementation: str | None = None,
     training: bool = False,
 ) -> tuple[AutoModelForCausalLM, AutoTokenizer]:
-    """Load a causal LM and tokenizer ready for GRPO training or evaluation.
+    """Load a causal LM and tokenizer ready for GRPO training or evaluation."""
+    source, local_dir = _resolve_model_source(model_name)
+    if local_dir is not None:
+        _require_local_files(local_dir, _TOKENIZER_FILES, "tokenizer")
+        _require_local_files(local_dir, _MODEL_FILES, "model")
 
-    Args:
-        model_name: HuggingFace model ID or local path.
-        device_map: Explicit transformers device map. None keeps placement local.
-        torch_dtype: Weight precision. bfloat16 recommended for modern GPUs.
-        attn_implementation: "flash_attention_2" or "eager". None = auto-detect
-            (uses flash_attention_2 if flash-attn is installed, else eager).
-        training: When True, prefer the single visible CUDA device.
-
-    Returns:
-        (model, tokenizer) tuple.
-    """
     impl = attn_implementation or _best_attn_impl()
     target_device = "cuda:0" if torch.cuda.is_available() else "cpu"
     effective_dtype = torch_dtype if torch.cuda.is_available() else torch.float32
-
-    logger.info(f"Loading tokenizer: {model_name}")
-    tokenizer = AutoTokenizer.from_pretrained(model_name)
-
-    # Qwen base models ship without a dedicated pad token — use eos instead.
-    if tokenizer.pad_token is None:
-        tokenizer.pad_token = tokenizer.eos_token
-        logger.info("pad_token set to eos_token")
-
-    # Left-padding is required for decoder-only generation so that all
-    # completions in a batch start at the same relative position.
-    tokenizer.padding_side = "left"
+    tokenizer = load_tokenizer(source)
 
     load_kwargs = {
         "torch_dtype": effective_dtype,
@@ -109,16 +136,16 @@ def load_model_and_tokenizer(
 
     logger.info(
         "Loading model: %s  dtype=%s  attn=%s  device_map=%s  target_device=%s",
-        model_name,
+        source,
         effective_dtype,
         impl,
         effective_device_map,
         target_device,
     )
-    model = AutoModelForCausalLM.from_pretrained(model_name, **load_kwargs)
+    model = AutoModelForCausalLM.from_pretrained(source, **load_kwargs)
     if effective_device_map is None:
         model = model.to(target_device)
 
     n_params = sum(p.numel() for p in model.parameters()) / 1e6
-    logger.info(f"Model loaded — {n_params:.1f}M parameters")
+    logger.info("Model loaded — %.1fM parameters", n_params)
     return model, tokenizer

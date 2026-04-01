@@ -94,7 +94,6 @@ def configure_runtime_environment(
         "XDG_CACHE_HOME": str(resolved_xdg_cache_home),
         "TORCH_HOME": str(resolved_torch_home),
         "HF_HOME": str(resolved_hf_home),
-        "TRANSFORMERS_CACHE": str(resolved_hf_hub_cache),
         "HUGGINGFACE_HUB_CACHE": str(resolved_hf_hub_cache),
         "HF_DATASETS_CACHE": str(resolved_hf_datasets_cache),
         "VLLM_CACHE_ROOT": str(resolved_vllm_cache_root),

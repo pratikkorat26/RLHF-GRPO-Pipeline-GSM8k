@@ -210,6 +210,7 @@ def run_evaluation(cfg: EvalConfig) -> EvalResults:
     logger.info("  split    : %s", cfg.split)
     logger.info("  backend  : %s", cfg.eval_backend)
     logger.info("  samples  : %s", cfg.num_samples or "all")
+    logger.info("  localpath : %s", Path(cfg.model_name).expanduser())
     logger.info("=" * 60)
 
     runtime_env = configure_runtime_environment(
