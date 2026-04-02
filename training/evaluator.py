@@ -141,6 +141,7 @@ def _run_vllm_evaluation(
     llm = LLM(
         model=cfg.model_name,
         language_model_only=True,
+        gpu_memory_utilization=cfg.gpu_memory_utilization,
     )
     sampling_params = SamplingParams(
         temperature=cfg.temperature,
@@ -211,6 +212,7 @@ def run_evaluation(cfg: EvalConfig) -> EvalResults:
     logger.info("  backend  : %s", cfg.eval_backend)
     logger.info("  samples  : %s", cfg.num_samples or "all")
     logger.info("  localpath : %s", Path(cfg.model_name).expanduser())
+    logger.info("  gpu_mem  : %s", cfg.gpu_memory_utilization)
     logger.info("=" * 60)
 
     runtime_env = configure_runtime_environment(

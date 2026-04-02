@@ -13,7 +13,9 @@ Usage:
 
 import argparse
 import logging
+from dataclasses import replace
 
+from project_config import ProjectConfig
 from training.config import TrainingConfig
 from training.trainer import run_training
 
@@ -24,7 +26,8 @@ logging.basicConfig(
 
 
 def parse_args() -> TrainingConfig:
-    defaults = TrainingConfig()
+    project_defaults = ProjectConfig()
+    defaults = project_defaults.resolved_training()
     p = argparse.ArgumentParser(description="GRPO training on GSM8K")
 
     # model & data
@@ -66,7 +69,8 @@ def parse_args() -> TrainingConfig:
                    choices=["none", "wandb", "tensorboard"])
 
     args = p.parse_args()
-    return TrainingConfig(
+    return replace(
+        defaults,
         model_name=args.model_name,
         dataset_path=args.dataset_path,
         output_dir=args.output_dir,

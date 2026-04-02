@@ -43,6 +43,26 @@ trainer/   analysis/          data/grpo/reports/
 
 ---
 
+## Configuration
+
+Runtime defaults are now centralized in [`project_config.py`](/E:/learning/SeriousProject/transformers/project_config.py).
+That module is the single source of truth for:
+
+- storage/runtime paths
+- data pipeline defaults
+- training defaults
+- evaluation defaults
+- reward defaults
+
+The compatibility modules [`data/config.py`](/E:/learning/SeriousProject/transformers/data/config.py),
+[`training/config.py`](/E:/learning/SeriousProject/transformers/training/config.py), and
+[`project_paths.py`](/E:/learning/SeriousProject/transformers/project_paths.py) now forward to the centralized config layer.
+
+Environment variables are only used for storage/runtime concerns such as `PROJECT_STORAGE_ROOT`.
+Model, data, training, and evaluation defaults now live in repo code and are overridden by CLI flags.
+
+---
+
 ## Quick Start
 
 ```bash
@@ -240,6 +260,7 @@ python evaluate.py \
   --model_name /data/cmpe258-sp24/pratikkorat/models/grpo/checkpoint-500 \
   --eval_backend vllm \
   --batch_size 32 \
+  --gpu_memory_utilization 0.8 \
   --output_dir /data/cmpe258-sp24/pratikkorat/models/eval
 
 # Evaluate the full test split; omit --num_samples for a full-dataset run
@@ -247,6 +268,7 @@ python evaluate.py \
   --model_name /data/cmpe258-sp24/pratikkorat/models/grpo/checkpoint-500 \
   --eval_backend vllm \
   --batch_size 64 \
+  --gpu_memory_utilization 0.8 \
   --output_dir /data/cmpe258-sp24/pratikkorat/models/eval_full
 
 # Transformers fallback for debugging or backend comparison
@@ -296,6 +318,7 @@ python evaluate.py \
   --model_name Qwen/Qwen3.5-0.8B \
   --eval_backend vllm \
   --batch_size 64 \
+  --gpu_memory_utilization 0.8 \
   --output_dir /data/cmpe258-sp24/pratikkorat/models/eval_qwen_full
 ```
 

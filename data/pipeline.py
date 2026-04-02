@@ -10,11 +10,12 @@ import sys
 import warnings
 from collections import Counter
 from concurrent.futures import ProcessPoolExecutor, as_completed
-from dataclasses import asdict, dataclass, field
+from dataclasses import asdict, dataclass, field, replace
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+from project_config import ProjectConfig
 from project_paths import configure_runtime_environment
 
 warnings.filterwarnings("ignore", category=UserWarning, module="requests")
@@ -535,8 +536,10 @@ def build_pipeline(
     source_dataset_config: str = "main",
 ) -> DatasetDict:
     _require_datasets()
-    configure_runtime_environment()
-    cfg = PipelineConfig(
+    project_defaults = ProjectConfig()
+    configure_runtime_environment(storage=project_defaults.storage)
+    cfg = replace(
+        project_defaults.resolved_pipeline(),
         splits=splits,
         output_dir=output_dir,
         system_prompt=system_prompt,
@@ -639,25 +642,26 @@ def _print_summary(dd: DatasetDict, split_reports: dict[str, dict]) -> None:
 
 
 def parse_args() -> argparse.Namespace:
-    defaults = PipelineConfig()
+    project_defaults = ProjectConfig()
+    defaults = project_defaults.resolved_pipeline()
     p = argparse.ArgumentParser(description="GSM8K -> GRPO data pipeline")
     p.add_argument(
         "--splits",
         nargs="+",
-        default=["train", "test"],
+        default=defaults.splits,
         help="Dataset splits to process",
     )
     p.add_argument("--output_dir", default=defaults.output_dir, help="Root output directory")
     p.add_argument(
         "--system_prompt",
-        default=DEFAULT_SYSTEM_PROMPT,
+        default=defaults.system_prompt,
         help="System prompt for samples",
     )
     p.add_argument(
         "--no_difficulty", action="store_true", help="Skip difficulty estimation"
     )
     p.add_argument(
-        "--num_workers", type=int, default=4, help="Parallel workers for processing"
+        "--num_workers", type=int, default=defaults.num_workers, help="Parallel workers for processing"
     )
     p.add_argument("--no_jsonl", action="store_true", help="Skip JSONL output")
     p.add_argument(
@@ -666,26 +670,26 @@ def parse_args() -> argparse.Namespace:
     p.add_argument(
         "--max_prompt_length",
         type=int,
-        default=512,
+        default=defaults.max_prompt_length,
         help="Estimated prompt length limit for risk stats",
     )
     p.add_argument(
         "--max_parse_error_rate",
         type=float,
-        default=0.01,
+        default=defaults.max_parse_error_rate,
         help="Maximum allowed parse/drop rate",
     )
     p.add_argument(
         "--max_truncation_risk_rate",
         type=float,
-        default=0.0,
+        default=defaults.max_truncation_risk_rate,
         help="Maximum fraction of prompts allowed to exceed max_prompt_length",
     )
     p.add_argument(
-        "--source_dataset_name", default="openai/gsm8k", help="Source dataset name"
+        "--source_dataset_name", default=defaults.source_dataset_name, help="Source dataset name"
     )
     p.add_argument(
-        "--source_dataset_config", default="main", help="Source dataset config"
+        "--source_dataset_config", default=defaults.source_dataset_config, help="Source dataset config"
     )
     return p.parse_args()
 

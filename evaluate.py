@@ -12,7 +12,9 @@ Usage:
 
 import argparse
 import logging
+from dataclasses import replace
 
+from project_config import ProjectConfig
 from training.config import EvalConfig
 from training.evaluator import run_evaluation
 
@@ -23,7 +25,8 @@ logging.basicConfig(
 
 
 def parse_args() -> EvalConfig:
-    defaults = EvalConfig()
+    project_defaults = ProjectConfig()
+    defaults = project_defaults.resolved_evaluation()
     p = argparse.ArgumentParser(description="Pass-0 evaluation on GSM8K")
 
     p.add_argument("--model_name", default=defaults.model_name,
@@ -44,12 +47,15 @@ def parse_args() -> EvalConfig:
     p.add_argument("--max_prompt_length", type=int, default=defaults.max_prompt_length)
     p.add_argument("--max_new_tokens", type=int, default=defaults.max_new_tokens)
     p.add_argument("--temperature", type=float, default=defaults.temperature)
+    p.add_argument("--gpu_memory_utilization", type=float, default=defaults.gpu_memory_utilization,
+                   help="vLLM GPU memory fraction to reserve")
     p.add_argument("--num_workers", type=int, default=defaults.num_workers,
                    help="DataLoader worker processes for transformers backend")
     p.add_argument("--seed", type=int, default=defaults.seed)
 
     args = p.parse_args()
-    return EvalConfig(
+    return replace(
+        defaults,
         model_name=args.model_name,
         dataset_path=args.dataset_path,
         split=args.split,
@@ -63,6 +69,7 @@ def parse_args() -> EvalConfig:
         max_prompt_length=args.max_prompt_length,
         max_new_tokens=args.max_new_tokens,
         temperature=args.temperature,
+        gpu_memory_utilization=args.gpu_memory_utilization,
         num_workers=args.num_workers,
         seed=args.seed,
     )
