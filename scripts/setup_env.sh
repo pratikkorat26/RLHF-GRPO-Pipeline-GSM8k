@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-PROJECT_STORAGE_ROOT="${PROJECT_STORAGE_ROOT:-$HOME/gsm8k-grpo}"
+PROJECT_STORAGE_ROOT="${PROJECT_STORAGE_ROOT:-/mnt/e/learning/SeriousProject/transformers/.localdata}"
 export PROJECT_STORAGE_ROOT
 
 export TORCH_HOME="${TORCH_HOME:-$PROJECT_STORAGE_ROOT/.cache/torch}"
