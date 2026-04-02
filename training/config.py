@@ -1,7 +1,2 @@
-"""
-Compatibility wrapper for centralized project configuration.
-"""
-
-from project_config import EvalConfig, TrainingConfig
-
-__all__ = ["TrainingConfig", "EvalConfig"]
+"""Compatibility wrapper forwarding to gsm8k_grpo.training.config."""
+from gsm8k_grpo.training.config import *  # noqa: F401,F403

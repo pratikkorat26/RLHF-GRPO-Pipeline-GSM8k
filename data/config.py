@@ -1,7 +1,2 @@
-"""
-Compatibility wrapper for centralized project configuration.
-"""
-
-from project_config import PipelineConfig, RewardConfig
-
-__all__ = ["RewardConfig", "PipelineConfig"]
+"""Compatibility wrapper forwarding to gsm8k_grpo.data.config."""
+from gsm8k_grpo.data.config import *  # noqa: F401,F403
