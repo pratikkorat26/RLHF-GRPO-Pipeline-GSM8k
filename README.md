@@ -80,14 +80,17 @@ $env:PROJECT_STORAGE_ROOT = "E:\custom\path"
 . .\scripts\setup_env.ps1
 ```
 
-Default script roots:
+### What `setup_env.sh` does
 
-- WSL/Linux: `$HOME/gsm8k-grpo`
-- PowerShell: `<repo>/.localdata`
+`setup_env.sh` splits local state into two roots:
 
-The scripts create and export:
+- `PROJECT_STORAGE_ROOT`: artifacts and outputs you want to keep
+- `PROJECT_RUNTIME_ROOT`: caches and temp files
+
+The script exports:
 
 - `PROJECT_STORAGE_ROOT`
+- `PROJECT_RUNTIME_ROOT`
 - `TORCH_HOME`
 - `HF_HOME`
 - `HF_DATASETS_CACHE`
@@ -97,14 +100,104 @@ The scripts create and export:
 - `XDG_CACHE_HOME`
 - `TMPDIR`, `TMP`, `TEMP`
 
-They also create:
+It also creates:
 
 - `data/grpo`
 - `models/grpo`
 - `models/eval`
 - `venvs`
-- `.cache/...`
+- runtime cache directories
 - `tmp`
+
+### WSL runtime split
+
+If `PROJECT_STORAGE_ROOT` is under `/mnt/...`, `setup_env.sh` automatically keeps artifacts on that mounted path but moves runtime-only files to a Linux-native path.
+
+Example:
+
+```bash
+export PROJECT_STORAGE_ROOT=/mnt/e/learning/SeriousProject/transformers/.localdata
+source scripts/setup_env.sh
+```
+
+This resolves to:
+
+```bash
+PROJECT_STORAGE_ROOT=/mnt/e/learning/SeriousProject/transformers/.localdata
+PROJECT_RUNTIME_ROOT=$HOME/.cache/gsm8k-grpo
+TORCH_HOME=$HOME/.cache/gsm8k-grpo/torch
+HF_HOME=$HOME/.cache/gsm8k-grpo/huggingface
+HF_DATASETS_CACHE=$HOME/.cache/gsm8k-grpo/huggingface/datasets
+HUGGINGFACE_HUB_CACHE=$HOME/.cache/gsm8k-grpo/huggingface/hub
+VLLM_CACHE_ROOT=$HOME/.cache/gsm8k-grpo/vllm
+TRITON_CACHE_DIR=$HOME/.cache/gsm8k-grpo/triton
+TMPDIR=$HOME/.cache/gsm8k-grpo/tmp
+```
+
+That split is required for WSL because `vllm` IPC sockets and temp files do not work reliably on the Windows-mounted `/mnt/...` filesystem.
+
+### Cleanup
+
+Preview the generated local paths that would be removed:
+
+```bash
+bash scripts/clean_env.sh
+```
+
+Delete them:
+
+```bash
+bash scripts/clean_env.sh --yes
+```
+
+### What `clean_env.sh` removes
+
+`clean_env.sh` uses the same root-resolution logic as `setup_env.sh`.
+
+It removes generated artifact directories under `PROJECT_STORAGE_ROOT`:
+
+- `data/grpo`
+- `models/grpo`
+- `models/eval`
+- `venvs`
+
+It also removes generated runtime directories under `PROJECT_RUNTIME_ROOT`:
+
+- `torch`
+- `huggingface`
+- `vllm`
+- `triton`
+- `tmp`
+
+Current local-root behavior:
+
+- if `PROJECT_STORAGE_ROOT` is repo-local `.localdata`, the whole `.localdata` tree is removed
+- if `PROJECT_RUNTIME_ROOT` is `$HOME/.cache/gsm8k-grpo`, that whole runtime tree can be removed too
+
+`bash scripts/clean_env.sh` is a dry-run preview. Nothing is deleted until you pass `--yes`.
+
+### WSL Troubleshooting
+
+If `vllm` fails with IPC or temp-path errors, confirm that:
+
+- `PROJECT_STORAGE_ROOT` is under `/mnt/...`
+- `PROJECT_RUNTIME_ROOT` is under `$HOME/.cache/gsm8k-grpo`
+- `TMPDIR` is not on `/mnt/...`
+
+Quick check:
+
+```bash
+echo "$PROJECT_STORAGE_ROOT"
+echo "$PROJECT_RUNTIME_ROOT"
+echo "$TMPDIR"
+```
+
+If WSL reports `syntax error: unexpected end of file` for the shell scripts, convert them to LF line endings:
+
+```bash
+sed -i 's/\r$//' scripts/setup_env.sh scripts/clean_env.sh
+chmod +x scripts/setup_env.sh scripts/clean_env.sh
+```
 
 ---
 
@@ -113,7 +206,13 @@ They also create:
 ### Local WSL/Linux
 
 ```bash
+export PROJECT_STORAGE_ROOT=/mnt/e/learning/SeriousProject/transformers/.localdata
 source scripts/setup_env.sh
+
+echo "$PROJECT_STORAGE_ROOT"
+echo "$PROJECT_RUNTIME_ROOT"
+echo "$TMPDIR"
+
 python3.11 -m venv .venv
 source .venv/bin/activate
 uv pip install torch torchvision --index-url https://download.pytorch.org/whl/cu121
@@ -121,6 +220,17 @@ uv pip install -r requirements.txt
 
 python -m gsm8k_grpo.cli.pipeline --splits train test
 python -m pytest tests/ -v
+```
+
+Smoke evaluation for a few samples:
+
+```bash
+python -m gsm8k_grpo.cli.evaluate \
+  --model_name Qwen/Qwen3.5-0.8B \
+  --eval_backend transformers \
+  --num_samples 8 \
+  --batch_size 8 \
+  --output_dir "$PROJECT_STORAGE_ROOT/models/eval_smoke"
 ```
 
 ### Local PowerShell
@@ -165,6 +275,16 @@ dataset artifacts=/data/cmpe258-sp24/pratikkorat/data/grpo
 training outputs=/data/cmpe258-sp24/pratikkorat/models/grpo
 evaluation outputs=/data/cmpe258-sp24/pratikkorat/models/eval
 venv=/data/cmpe258-sp24/pratikkorat/venvs/gsm8k-grpo
+```
+
+For WSL local development with artifacts under `/mnt/e/...`, the setup script resolves a split layout like:
+
+```bash
+PROJECT_STORAGE_ROOT=/mnt/e/learning/SeriousProject/transformers/.localdata
+PROJECT_RUNTIME_ROOT=$HOME/.cache/gsm8k-grpo
+TORCH_HOME=$HOME/.cache/gsm8k-grpo/torch
+HF_HOME=$HOME/.cache/gsm8k-grpo/huggingface
+TMPDIR=$HOME/.cache/gsm8k-grpo/tmp
 ```
 
 ---
