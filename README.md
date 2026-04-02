@@ -34,18 +34,18 @@ trainer/   analysis/          data/grpo/reports/
 
 | File | Purpose |
 |------|---------|
-| `utils.py` | Shared numeric normalization (`normalise_numeric`) |
-| `config.py` | Frozen dataclasses: `PipelineConfig`, `RewardConfig` |
-| `pipeline.py` | GSM8K → GRPO dataset (parse, validate, save artifacts) |
-| `dataloader.py` | `GRPODataset`, `GRPOCollator`, `build_dataloader` |
-| `reward.py` | Reward functions + GRPO advantage computation |
+| `gsm8k_grpo/common/normalization.py` | Shared numeric normalization (`normalise_numeric`) |
+| `gsm8k_grpo/config/project.py` | Canonical project, train, eval, and reward config dataclasses |
+| `gsm8k_grpo/data/pipeline.py` | GSM8K -> GRPO dataset (parse, validate, save artifacts) |
+| `gsm8k_grpo/data/dataloader.py` | `GRPODataset`, `GRPOCollator`, `build_dataloader` |
+| `gsm8k_grpo/rewards/core.py` | Reward functions + GRPO advantage computation |
 | `tests/` | Unit tests (~90% coverage, no network calls) |
 
 ---
 
 ## Configuration
 
-Runtime defaults are now centralized in [`project_config.py`](/E:/learning/SeriousProject/transformers/project_config.py).
+Runtime defaults are now centralized in [`gsm8k_grpo/config/project.py`](/E:/learning/SeriousProject/transformers/gsm8k_grpo/config/project.py).
 That module is the single source of truth for:
 
 - storage/runtime paths
@@ -56,7 +56,7 @@ That module is the single source of truth for:
 
 The compatibility modules [`data/config.py`](/E:/learning/SeriousProject/transformers/data/config.py),
 [`training/config.py`](/E:/learning/SeriousProject/transformers/training/config.py), and
-[`project_paths.py`](/E:/learning/SeriousProject/transformers/project_paths.py) now forward to the centralized config layer.
+[`project_paths.py`](/E:/learning/SeriousProject/transformers/project_paths.py) now forward to the canonical `gsm8k_grpo` package layer.
 
 Environment variables are only used for storage/runtime concerns such as `PROJECT_STORAGE_ROOT`.
 Model, data, training, and evaluation defaults now live in repo code and are overridden by CLI flags.
@@ -72,7 +72,7 @@ uv pip install torch torchvision --index-url https://download.pytorch.org/whl/cu
 uv pip install -r requirements.txt
 
 # Build JSONL + HuggingFace Dataset artifacts
-python -m data.pipeline --splits train test --output_dir ./data/grpo
+python -m gsm8k_grpo.cli.pipeline --splits train test --output_dir ./data/grpo
 
 # Run tests
 python -m pytest tests/ -v
@@ -80,6 +80,8 @@ python -m pytest tests/ -v
 
 The commands above are the supported Linux path. Hugging Face and Torch caches
 are expected to be configured externally on the target machine.
+
+Backward-compatible wrappers remain available for train_grpo.py, evaluate.py, and python -m data.pipeline, but the canonical interfaces now live under gsm8k_grpo.
 
 By default, the project now assumes the following Linux storage root:
 
@@ -107,7 +109,7 @@ Set `PROJECT_STORAGE_ROOT` only if you need to override that root.
 ### Python API
 
 ```python
-from data.pipeline import build_pipeline
+from gsm8k_grpo.data.pipeline import build_pipeline
 
 trainer_dd = build_pipeline(
     splits=["train", "test"],
@@ -239,24 +241,24 @@ uv pip install torch torchvision --index-url https://download.pytorch.org/whl/cu
 uv pip install -r requirements.txt
 
 # Build dataset artifacts if needed
-python -m data.pipeline
+python -m gsm8k_grpo.cli.pipeline
 
 # Single-GPU H100 training; vLLM is enabled by default
-python train_grpo.py --model_name Qwen/Qwen3.5-0.8B-Base
+python -m gsm8k_grpo.cli.train --model_name Qwen/Qwen3.5-0.8B-Base
 
 # Resume from the latest checkpoint
-python train_grpo.py \
+python -m gsm8k_grpo.cli.train \
   --model_name Qwen/Qwen3.5-0.8B-Base \
   --resume_from_checkpoint /data/cmpe258-sp24/pratikkorat/models/grpo/checkpoint-500
 
 # Optional fallback path without vLLM
-python train_grpo.py \
+python -m gsm8k_grpo.cli.train \
   --model_name Qwen/Qwen3.5-0.8B-Base \
   --output_dir /data/cmpe258-sp24/pratikkorat/models/grpo_no_vllm \
   --no_use_vllm
 
 # Evaluate a trained checkpoint or final export
-python evaluate.py \
+python -m gsm8k_grpo.cli.evaluate \
   --model_name /data/cmpe258-sp24/pratikkorat/models/grpo/checkpoint-500 \
   --eval_backend vllm \
   --batch_size 32 \
@@ -264,7 +266,7 @@ python evaluate.py \
   --output_dir /data/cmpe258-sp24/pratikkorat/models/eval
 
 # Evaluate the full test split; omit --num_samples for a full-dataset run
-python evaluate.py \
+python -m gsm8k_grpo.cli.evaluate \
   --model_name /data/cmpe258-sp24/pratikkorat/models/grpo/checkpoint-500 \
   --eval_backend vllm \
   --batch_size 64 \
@@ -272,7 +274,7 @@ python evaluate.py \
   --output_dir /data/cmpe258-sp24/pratikkorat/models/eval_full
 
 # Transformers fallback for debugging or backend comparison
-python evaluate.py \
+python -m gsm8k_grpo.cli.evaluate \
   --model_name /data/cmpe258-sp24/pratikkorat/models/grpo/checkpoint-500 \
   --eval_backend transformers \
   --num_samples 8 \
@@ -303,7 +305,7 @@ python -c "import vllm, transformers, huggingface_hub; print(vllm.__version__, t
 Recommended fallback while aligning the `vllm` env:
 
 ```bash
-python evaluate.py \
+python -m gsm8k_grpo.cli.evaluate \
   --model_name Qwen/Qwen3.5-0.8B \
   --eval_backend transformers \
   --num_samples 8 \
@@ -314,7 +316,7 @@ python evaluate.py \
 After the clean `vllm` env is working, use:
 
 ```bash
-python evaluate.py \
+python -m gsm8k_grpo.cli.evaluate \
   --model_name Qwen/Qwen3.5-0.8B \
   --eval_backend vllm \
   --batch_size 64 \
@@ -334,6 +336,9 @@ If you need a scheduler wrapper, a minimal single-GPU job script looks like:
 
 source /data/cmpe258-sp24/pratikkorat/venvs/gsm8k-grpo/bin/activate
 
-python train_grpo.py \
+python -m gsm8k_grpo.cli.train \
   --model_name Qwen/Qwen3.5-0.8B-Base
 ```
+
+
+

@@ -1,4 +1,5 @@
 import json
+import os
 import shutil
 import tempfile
 import unittest
@@ -16,8 +17,8 @@ except ModuleNotFoundError:
     load_from_disk = None
     DATASETS_AVAILABLE = False
 
-from data.config import RewardConfig
-from data.pipeline import (
+from gsm8k_grpo.config.project import RewardConfig
+from gsm8k_grpo.data.pipeline import (
     _check_cross_split_leakage,
     build_pipeline,
     build_prompt_messages,
@@ -27,8 +28,8 @@ from data.pipeline import (
     PipelineValidationError,
     PUBLIC_SAMPLE_FIELDS,
 )
-from utils import normalise_numeric
-from reward import (
+from gsm8k_grpo.common.normalization import normalise_numeric
+from gsm8k_grpo.rewards.core import (
     ANSWER_EXTRACTION_POLICY,
     NORMALIZATION_POLICY,
     REWARD_CONTRACT_VERSION,
@@ -61,6 +62,12 @@ def managed_tempdir():
         yield str(path)
     finally:
         shutil.rmtree(path, ignore_errors=True)
+
+
+@contextmanager
+def managed_storage_root(root: str):
+    with patch.dict(os.environ, {"PROJECT_STORAGE_ROOT": root}):
+        yield
 
 
 class TestNormaliseNumeric(unittest.TestCase):
@@ -267,14 +274,15 @@ class TestBuildPipeline(unittest.TestCase):
 
     def test_build_pipeline_writes_artifacts_and_reports(self):
         with managed_tempdir() as tmpdir:
-            with patch("data.pipeline.load_gsm8k", side_effect=self._fake_loader):
-                dd = build_pipeline(
-                    splits=["train", "test"],
-                    output_dir=tmpdir,
-                    num_workers=1,
-                    save_jsonl_flag=True,
-                    save_hf_flag=True,
-                )
+            with managed_storage_root(tmpdir):
+                with patch("gsm8k_grpo.data.pipeline.load_gsm8k", side_effect=self._fake_loader):
+                    dd = build_pipeline(
+                        splits=["train", "test"],
+                        output_dir=tmpdir,
+                        num_workers=1,
+                        save_jsonl_flag=True,
+                        save_hf_flag=True,
+                    )
 
             self.assertEqual(set(dd.keys()), {"train", "test"})
             trainer_jsonl = Path(tmpdir) / "trainer" / "jsonl" / "train.jsonl"
@@ -319,13 +327,14 @@ class TestBuildPipeline(unittest.TestCase):
             return Dataset.from_list(rows)
 
         with managed_tempdir() as tmpdir:
-            with patch("data.pipeline.load_gsm8k", side_effect=dup_loader):
-                with self.assertRaises(PipelineValidationError):
-                    build_pipeline(
-                        splits=["train", "test"],
-                        output_dir=tmpdir,
-                        num_workers=1,
-                    )
+            with managed_storage_root(tmpdir):
+                with patch("gsm8k_grpo.data.pipeline.load_gsm8k", side_effect=dup_loader):
+                    with self.assertRaises(PipelineValidationError):
+                        build_pipeline(
+                            splits=["train", "test"],
+                            output_dir=tmpdir,
+                            num_workers=1,
+                        )
 
     def test_build_pipeline_rejects_parse_error_threshold(self):
         def bad_loader(split, dataset_name="openai/gsm8k", dataset_config="main"):
@@ -333,14 +342,15 @@ class TestBuildPipeline(unittest.TestCase):
             return Dataset.from_list(rows)
 
         with managed_tempdir() as tmpdir:
-            with patch("data.pipeline.load_gsm8k", side_effect=bad_loader):
-                with self.assertRaises(PipelineValidationError):
-                    build_pipeline(
-                        splits=["train"],
-                        output_dir=tmpdir,
-                        num_workers=1,
-                        max_parse_error_rate=0.0,
-                    )
+            with managed_storage_root(tmpdir):
+                with patch("gsm8k_grpo.data.pipeline.load_gsm8k", side_effect=bad_loader):
+                    with self.assertRaises(PipelineValidationError):
+                        build_pipeline(
+                            splits=["train"],
+                            output_dir=tmpdir,
+                            num_workers=1,
+                            max_parse_error_rate=0.0,
+                        )
 
     def test_build_pipeline_rejects_truncation_risk(self):
         long_rows = [{"question": "word " * 600, "answer": "Math.\n#### 1"}]
@@ -349,24 +359,26 @@ class TestBuildPipeline(unittest.TestCase):
             return Dataset.from_list(long_rows)
 
         with managed_tempdir() as tmpdir:
-            with patch("data.pipeline.load_gsm8k", side_effect=long_loader):
-                with self.assertRaises(PipelineValidationError):
-                    build_pipeline(
-                        splits=["train"],
-                        output_dir=tmpdir,
-                        num_workers=1,
-                        max_prompt_length=100,
-                        max_truncation_risk_rate=0.0,
-                    )
+            with managed_storage_root(tmpdir):
+                with patch("gsm8k_grpo.data.pipeline.load_gsm8k", side_effect=long_loader):
+                    with self.assertRaises(PipelineValidationError):
+                        build_pipeline(
+                            splits=["train"],
+                            output_dir=tmpdir,
+                            num_workers=1,
+                            max_prompt_length=100,
+                            max_truncation_risk_rate=0.0,
+                        )
 
     def test_build_pipeline_is_logically_deterministic(self):
         with managed_tempdir() as tmpdir:
-            first = Path(tmpdir) / "run1"
-            second = Path(tmpdir) / "run2"
-            with patch("data.pipeline.load_gsm8k", side_effect=self._fake_loader):
-                build_pipeline(["train", "test"], str(first), num_workers=1)
-            with patch("data.pipeline.load_gsm8k", side_effect=self._fake_loader):
-                build_pipeline(["train", "test"], str(second), num_workers=1)
+            with managed_storage_root(tmpdir):
+                first = Path(tmpdir) / "run1"
+                second = Path(tmpdir) / "run2"
+                with patch("gsm8k_grpo.data.pipeline.load_gsm8k", side_effect=self._fake_loader):
+                    build_pipeline(["train", "test"], str(first), num_workers=1)
+                with patch("gsm8k_grpo.data.pipeline.load_gsm8k", side_effect=self._fake_loader):
+                    build_pipeline(["train", "test"], str(second), num_workers=1)
 
             first_train = (first / "trainer" / "jsonl" / "train.jsonl").read_text(
                 encoding="utf-8"
@@ -391,3 +403,4 @@ class TestBuildPipeline(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
