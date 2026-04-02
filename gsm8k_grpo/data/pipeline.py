@@ -15,7 +15,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
-from gsm8k_grpo.config.project import ProjectConfig
+from gsm8k_grpo.config.project import PipelineConfig, ProjectConfig
 from gsm8k_grpo.config.paths import configure_runtime_environment
 
 warnings.filterwarnings("ignore", category=UserWarning, module="requests")
@@ -46,7 +46,6 @@ except ModuleNotFoundError:
         return iterable
 
 
-from gsm8k_grpo.data.config import PipelineConfig
 from gsm8k_grpo.rewards.core import REWARD_CONTRACT_VERSION, reward_contract_dict
 from gsm8k_grpo.common.normalization import normalise_numeric
 

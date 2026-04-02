@@ -15,7 +15,7 @@ import logging
 from pathlib import Path
 
 from gsm8k_grpo.config.paths import configure_runtime_environment
-from gsm8k_grpo.training.config import TrainingConfig
+from gsm8k_grpo.config.project import TrainingConfig
 from gsm8k_grpo.training.model import load_model_and_tokenizer
 from gsm8k_grpo.training.runtime_compat import prepare_trl_runtime, require_vllm
 
@@ -112,11 +112,12 @@ def build_grpo_trainer(
 ):  # -> GRPOTrainer
     """Build a TRL GRPOTrainer from a TrainingConfig.
 
-    Reward functions are the four TRL-compatible wrappers from trl_grpo.py:
+    Reward functions are the four TRL-compatible wrappers from
+    gsm8k_grpo.rewards.trl:
       exact_match (weight 1.0) + soft_numeric (0.3) + format (0.2) + length (0.1)
 
     TRL sums the per-function rewards per completion; the relative weights
-    are encoded via RewardWeights in trl_grpo.py / reward.py.
+    are encoded via RewardWeights in gsm8k_grpo.rewards.
 
     Args:
         cfg: Frozen TrainingConfig.

@@ -4,8 +4,7 @@ import argparse
 import logging
 from dataclasses import replace
 
-from gsm8k_grpo.config.project import ProjectConfig
-from gsm8k_grpo.training.config import TrainingConfig
+from gsm8k_grpo.config.project import ProjectConfig, TrainingConfig
 from gsm8k_grpo.training.trainer import run_training
 
 logging.basicConfig(

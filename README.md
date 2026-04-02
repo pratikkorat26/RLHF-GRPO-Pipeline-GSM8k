@@ -156,7 +156,7 @@ data/grpo/
 ## Reward Functions
 
 ```python
-from reward import composite_reward, compute_grpo_advantages
+from gsm8k_grpo.rewards import composite_reward, compute_grpo_advantages
 
 # Score a single completion
 score = composite_reward(completion="Step 1...\n#### 72", reference="72")
@@ -184,7 +184,11 @@ This package integrates with HuggingFace's [TRL](https://huggingface.co/docs/trl
 ```python
 from datasets import Dataset
 from trl import GRPOTrainer, GRPOConfig
-from trl_grpo import exact_match_reward_func, soft_numeric_reward_func, format_reward_func
+from gsm8k_grpo.rewards import (
+    exact_match_reward_func,
+    format_reward_func,
+    soft_numeric_reward_func,
+)
 
 dataset = Dataset.from_list([
     {"prompt": "What is 2+2?", "reference_answer": "4"},
@@ -216,7 +220,7 @@ trainer.train()
 
 ```python
 from trl import GRPOTrainer, GRPOConfig
-from trl_grpo import create_reward_func, RewardWeights
+from gsm8k_grpo.rewards import RewardWeights, create_reward_func
 
 custom_weights = RewardWeights(
     exact_match=1.0,

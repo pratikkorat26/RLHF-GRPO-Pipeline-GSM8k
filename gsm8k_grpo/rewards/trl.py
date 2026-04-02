@@ -1,7 +1,7 @@
 """
 TRL GRPOTrainer integration for GSM8K GRPO training.
 
-Wraps reward functions from reward.py for use with HuggingFace TRL's GRPOTrainer.
+Wraps reward functions from gsm8k_grpo.rewards.core for use with HuggingFace TRL's GRPOTrainer.
 """
 
 from typing import Any

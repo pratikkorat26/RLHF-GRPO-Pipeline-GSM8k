@@ -25,8 +25,8 @@ import torch
 
 from gsm8k_grpo.data.dataloader import GRPODataset, GRPOCollator
 from gsm8k_grpo.config.paths import configure_runtime_environment
+from gsm8k_grpo.config.project import EvalConfig
 from gsm8k_grpo.rewards.core import composite_reward, exact_match_reward, format_reward
-from gsm8k_grpo.training.config import EvalConfig
 from gsm8k_grpo.training.model import load_model_and_tokenizer, load_tokenizer
 from gsm8k_grpo.training.runtime_compat import require_vllm
 
