@@ -5,13 +5,16 @@ from dataclasses import asdict, dataclass, field, replace
 from pathlib import Path
 
 
+def _default_storage_root() -> str:
+    return os.environ.get(
+        "PROJECT_STORAGE_ROOT",
+        str(Path(__file__).resolve().parents[2] / ".localdata")
+    )
+
+
 @dataclass(frozen=True)
 class StorageConfig:
-    project_storage_root: str = field(
-        default_factory=lambda: os.environ.get(
-            "PROJECT_STORAGE_ROOT", "/data/cmpe258-sp24/pratikkorat"
-        )
-    )
+    project_storage_root: str = field(default_factory=_default_storage_root)
 
     @property
     def root_path(self) -> Path:

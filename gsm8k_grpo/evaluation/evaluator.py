@@ -19,7 +19,7 @@ from collections import defaultdict
 from dataclasses import asdict, dataclass
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Iterable
+from typing import Iterable, Optional
 
 import torch
 
@@ -30,7 +30,37 @@ from gsm8k_grpo.rewards.core import composite_reward, exact_match_reward, format
 from gsm8k_grpo.training.model import load_model_and_tokenizer, load_tokenizer
 from gsm8k_grpo.training.runtime_compat import require_vllm
 
+try:
+    from tqdm import tqdm
+except ModuleNotFoundError:
+
+    def tqdm(iterable, **kwargs):
+        return iterable
+
 logger = logging.getLogger("gsm8k_grpo.evaluator")
+
+
+def _check_gpu_memory() -> dict:
+    """Check available GPU memory and return diagnostics."""
+    if not torch.cuda.is_available():
+        return {"available": False, "error": "CUDA not available"}
+    
+    try:
+        device = torch.cuda.current_device()
+        total = torch.cuda.get_device_properties(device).total_memory / 1e9
+        allocated = torch.cuda.memory_allocated(device) / 1e9
+        reserved = torch.cuda.memory_reserved(device) / 1e9
+        free = total - reserved
+        
+        return {
+            "available": True,
+            "total_gb": round(total, 2),
+            "allocated_gb": round(allocated, 2),
+            "reserved_gb": round(reserved, 2),
+            "free_gb": round(free, 2),
+        }
+    except Exception as e:
+        return {"available": False, "error": str(e)}
 
 
 @dataclass
@@ -149,15 +179,21 @@ def _run_vllm_evaluation(
     )
 
     accumulator = _EvalAccumulator()
-    for batch_idx, batch in enumerate(_batched_examples(examples, cfg.batch_size), start=1):
+    total_batches = (len(examples) + cfg.batch_size - 1) // cfg.batch_size
+
+    for batch_idx, batch in enumerate(
+        tqdm(
+            _batched_examples(examples, cfg.batch_size),
+            total=total_batches,
+            desc="Evaluating (vLLM)",
+        ),
+        start=1,
+    ):
         prompts = [item.prompt for item in batch]
         outputs = llm.generate(prompts, sampling_params, use_tqdm=False)
         for example, output in zip(batch, outputs):
             completion = output.outputs[0].text if output.outputs else ""
             accumulator.add(completion, example.reference_answer, example.metadata)
-
-        if batch_idx % 10 == 0 or accumulator.num_samples == len(examples):
-            logger.info("  [%s/%s] records evaluated", accumulator.num_samples, len(examples))
 
     return accumulator
 
@@ -171,7 +207,13 @@ def _run_transformers_evaluation(
     model.eval()
 
     accumulator = _EvalAccumulator()
-    for batch in _batched_examples(examples, cfg.batch_size):
+    total_batches = (len(examples) + cfg.batch_size - 1) // cfg.batch_size
+
+    for batch in tqdm(
+        _batched_examples(examples, cfg.batch_size),
+        total=total_batches,
+        desc="Evaluating (transformers)",
+    ):
         prompts = [example.prompt for example in batch]
         encodings = tokenizer(
             prompts,
@@ -198,13 +240,16 @@ def _run_transformers_evaluation(
         for completion, example in zip(completions, batch):
             accumulator.add(completion, example.reference_answer, example.metadata)
 
-        if accumulator.num_samples % max(cfg.batch_size * 10, 1) == 0:
-            logger.info("  [%s/%s] records evaluated", accumulator.num_samples, len(examples))
-
     return accumulator
 
 
-def run_evaluation(cfg: EvalConfig) -> EvalResults:
+def run_evaluation(cfg: EvalConfig, max_oom_retries: int = 2) -> EvalResults:
+    """Run evaluation with optional OOM retry logic.
+    
+    Args:
+        cfg: Evaluation configuration
+        max_oom_retries: Maximum retries on OOM errors
+    """
     logger.info("=" * 60)
     logger.info("Pass-0 Evaluation")
     logger.info("  model    : %s", cfg.model_name)
@@ -224,6 +269,17 @@ def run_evaluation(cfg: EvalConfig) -> EvalResults:
     logger.info("  torchhome: %s", runtime_env["TORCH_HOME"])
     logger.info("  hf_home  : %s", runtime_env["HF_HOME"])
     logger.info("  vllmcache: %s", runtime_env["VLLM_CACHE_ROOT"])
+    
+    gpu_info = _check_gpu_memory()
+    if gpu_info["available"]:
+        logger.info(
+            "  GPU memory: %.1fGB total, %.1fGB free, %.1fGB used",
+            gpu_info["total_gb"],
+            gpu_info["free_gb"],
+            gpu_info["allocated_gb"],
+        )
+    else:
+        logger.warning("  GPU memory: %s", gpu_info.get("error", "unavailable"))
 
     os.makedirs(cfg.output_dir, exist_ok=True)
     torch.manual_seed(cfg.seed)
@@ -231,11 +287,36 @@ def run_evaluation(cfg: EvalConfig) -> EvalResults:
 
     tokenizer = load_tokenizer(cfg.model_name)
     examples = _prepare_examples(cfg, tokenizer)
-
-    if cfg.eval_backend == "vllm":
-        accumulator = _run_vllm_evaluation(cfg, examples)
-    else:
-        accumulator = _run_transformers_evaluation(cfg, tokenizer, examples)
+    
+    accumulator = None
+    oom_attempt = 0
+    
+    while oom_attempt <= max_oom_retries:
+        try:
+            if cfg.eval_backend == "vllm":
+                accumulator = _run_vllm_evaluation(cfg, examples)
+            else:
+                accumulator = _run_transformers_evaluation(cfg, tokenizer, examples)
+            break
+            
+        except (torch.cuda.OutOfMemoryError, RuntimeError) as e:
+            error_msg = str(e).lower()
+            is_oom = "out of memory" in error_msg or "oom" in error_msg
+            
+            if is_oom and oom_attempt < max_oom_retries:
+                logger.error(f"OOM error on attempt {oom_attempt + 1}: {e}")
+                torch.cuda.empty_cache()
+                
+                new_batch_size = max(1, cfg.batch_size // 2)
+                logger.info(f"Retrying with reduced batch_size={new_batch_size}")
+                
+                cfg = cfg._replace(batch_size=new_batch_size)
+                oom_attempt += 1
+            else:
+                raise
+    
+    if accumulator is None:
+        raise RuntimeError("Evaluation failed: accumulator not initialized")
 
     results = accumulator.finalize(cfg.model_name, cfg.split)
     report_path = Path(cfg.output_dir) / "eval_results.json"

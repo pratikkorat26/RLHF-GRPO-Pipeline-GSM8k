@@ -1,322 +1,296 @@
-# RLHF GRPO Pipeline - GSM8K
+# GSM8K GRPO Training Pipeline
 
 Production-style data preparation, reward modeling, training, and evaluation pipeline for math reasoning with Group Relative Policy Optimization (GRPO) on [GSM8K](https://huggingface.co/datasets/openai/gsm8k).
 
 ---
 
-## Architecture
+## Table of Contents
 
-```text
-GSM8K (HuggingFace Hub)
-        |
-        v
-gsm8k_grpo.data.pipeline
-  parse answers, build prompts, estimate difficulty
-  validate, check leakage, enforce quality gates
-        |
-        v
-trainer/ + analysis/ + reports/
-        |
-        v
-gsm8k_grpo.data.dataloader
-  GRPODataset + GRPOCollator -> DataLoader
-        |
-        v
-gsm8k_grpo.rewards.core
-  exact_match + soft_numeric + format + length
-  composite_reward -> compute_grpo_advantages
+- [Overview](#overview)
+- [Quick Start](#quick-start)
+- [Project Structure](#project-structure)
+- [Environment Setup](#environment-setup)
+- [CLI Commands](#cli-commands)
+- [Storage](#storage)
+- [Reward Functions](#reward-functions)
+- [Training](#training)
+- [Evaluation](#evaluation)
+- [Running Tests](#running-tests)
+
+---
+
+## Overview
+
+This project implements a complete GRPO (Group Relative Policy Optimization) training pipeline:
+
+1. **Data Pipeline** - Downloads and processes GSM8K dataset with validation
+2. **Reward Functions** - Multiple reward components (exact match, soft numeric, format, length)
+3. **Training** - GRPO training with TRL and optional vLLM backend
+4. **Evaluation** - Pass-0 baseline evaluation with transformers or vLLM backend
+
+---
+
+## Quick Start
+
+### WSL2 / Linux
+
+```bash
+# 1. Setup environment (all data/caches stored in project directory)
+source scripts/setup_env.sh
+
+# 2. Create virtual environment
+python3.12 -m venv .venv
+source .venv/bin/activate
+
+# 3. Install dependencies (CUDA 12.1)
+pip install torch torchvision --index-url https://download.pytorch.org/whl/cu121
+pip install transformers datasets accelerate trl vllm tqdm
+
+# 4. Build data pipeline
+python -m gsm8k_grpo.cli.pipeline --splits train test
+
+# 5. Run evaluation (smoke test)
+python -m gsm8k_grpo.cli.evaluate \
+  --model_name Qwen/Qwen3.5-0.8B \
+  --eval_backend transformers \
+  --num_samples 8 \
+  --batch_size 8
+
+# 6. Train model
+python -m gsm8k_grpo.cli.train --model_name Qwen/Qwen3.5-0.8B-Base
 ```
 
-## Modules
+### Docker (Recommended for reproducibility)
 
-| File | Purpose |
-|------|---------|
-| `gsm8k_grpo/config/project.py` | Canonical storage, pipeline, training, evaluation, and reward config |
-| `gsm8k_grpo/data/pipeline.py` | GSM8K -> GRPO dataset preparation and artifact writing |
-| `gsm8k_grpo/data/dataloader.py` | Dataset and collator helpers for training/evaluation |
-| `gsm8k_grpo/training/trainer.py` | GRPO training orchestration |
-| `gsm8k_grpo/evaluation/evaluator.py` | Pass-0 evaluation and backend selection |
-| `gsm8k_grpo/rewards/core.py` | Reward functions and GRPO advantage computation |
+```dockerfile
+FROM nvidia/cuda:12.1.1-cudnn-devel-ubuntu22.04
 
-## Configuration
+RUN apt-get update && apt-get install -y python3.12 python3-pip
 
-Runtime defaults are centralized in [gsm8k_grpo/config/project.py](/E:/learning/SeriousProject/transformers/gsm8k_grpo/config/project.py). That module is the single source of truth for:
+RUN pip install torch torchvision --index-url https://download.pytorch.org/whl/cu121
+RUN pip install transformers datasets accelerate trl vllm tqdm
 
-- storage/runtime paths
-- data pipeline defaults
-- training defaults
-- evaluation defaults
-- reward defaults
+WORKDIR /workspace
+COPY . /workspace
 
-Environment variables are used only for storage/runtime concerns such as `PROJECT_STORAGE_ROOT`. Model, data, training, and evaluation defaults live in repo code and can be overridden by CLI flags.
+ENV PROJECT_STORAGE_ROOT=/workspace/.localdata
+RUN bash scripts/setup_env.sh
+
+CMD ["bash"]
+```
+
+Build and run:
+```bash
+docker build -t gsm8k-grpo .
+docker run --gpus all -v $(pwd):/workspace gsm8k-grpo
+```
+
+---
+
+## Project Structure
+
+```
+transformers/
+├── gsm8k_grpo/
+│   ├── __init__.py
+│   ├── cli/
+│   │   ├── __init__.py
+│   │   ├── pipeline.py      # Data pipeline CLI
+│   │   ├── train.py         # Training CLI
+│   │   └── evaluate.py      # Evaluation CLI
+│   ├── config/
+│   │   ├── __init__.py
+│   │   ├── project.py       # All config classes
+│   │   └── paths.py         # Path helpers
+│   ├── data/
+│   │   ├── __init__.py
+│   │   ├── pipeline.py      # GSM8K processing
+│   │   └── dataloader.py    # PyTorch DataLoader
+│   ├── training/
+│   │   ├── __init__.py
+│   │   ├── trainer.py       # GRPO trainer
+│   │   ├── model.py          # Model loading
+│   │   └── runtime_compat.py # vLLM compatibility
+│   ├── evaluation/
+│   │   ├── __init__.py
+│   │   └── evaluator.py      # Pass-0 evaluation
+│   ├── rewards/
+│   │   ├── __init__.py
+│   │   ├── core.py           # Reward functions
+│   │   └── trl.py            # TRL integration
+│   └── common/
+│       ├── __init__.py
+│       └── normalization.py   # Numeric parsing
+├── scripts/
+│   ├── setup_env.sh          # Linux/WSL2 environment setup
+│   ├── setup_env.ps1         # Windows PowerShell setup
+│   └── clean_env.sh          # Cleanup script
+├── tests/
+│   ├── __init__.py
+│   └── test_pipeline.py      # Unit tests
+├── requirements.txt
+└── README.md
+```
 
 ---
 
 ## Environment Setup
 
-Use the repo-owned setup scripts once per shell before running the CLI.
-
-WSL/Linux:
+### Linux / WSL2
 
 ```bash
 source scripts/setup_env.sh
 ```
 
-PowerShell:
+### Windows PowerShell
 
 ```powershell
 . .\scripts\setup_env.ps1
 ```
 
-Override the storage root first if you want a different location:
+### What `setup_env.sh` Does
+
+Sets environment variables and creates directories:
+
+| Variable | Purpose |
+|----------|---------|
+| `PROJECT_STORAGE_ROOT` | Base data directory (`.localdata/`) |
+| `TORCH_HOME` | PyTorch model cache |
+| `HF_HOME` | HuggingFace cache |
+| `HF_DATASETS_CACHE` | Downloaded datasets |
+| `HUGGINGFACE_HUB_CACHE` | Cached model files |
+| `VLLM_CACHE_ROOT` | vLLM compiled kernels |
+| `TRITON_CACHE_DIR` | Triton JIT cache |
+| `TMPDIR` | Temporary files |
+
+Directories created under `.localdata/`:
+```
+.localdata/
+├── data/grpo/          # Training data
+├── models/grpo/        # Trained checkpoints
+├── models/eval/        # Evaluation outputs
+├── venvs/              # Virtual environments
+├── torch/              # PyTorch cache
+├── huggingface/        # HuggingFace cache
+├── vllm/              # vLLM cache
+├── triton/            # Triton cache
+└── tmp/               # Temp files
+```
+
+### Custom Storage Location
 
 ```bash
 export PROJECT_STORAGE_ROOT=/custom/path
 source scripts/setup_env.sh
 ```
 
-```powershell
-$env:PROJECT_STORAGE_ROOT = "E:\custom\path"
-. .\scripts\setup_env.ps1
-```
-
-### What `setup_env.sh` does
-
-`setup_env.sh` splits local state into two roots:
-
-- `PROJECT_STORAGE_ROOT`: artifacts and outputs you want to keep
-- `PROJECT_RUNTIME_ROOT`: caches and temp files
-
-The script exports:
-
-- `PROJECT_STORAGE_ROOT`
-- `PROJECT_RUNTIME_ROOT`
-- `TORCH_HOME`
-- `HF_HOME`
-- `HF_DATASETS_CACHE`
-- `HUGGINGFACE_HUB_CACHE`
-- `VLLM_CACHE_ROOT`
-- `TRITON_CACHE_DIR`
-- `XDG_CACHE_HOME`
-- `TMPDIR`, `TMP`, `TEMP`
-
-It also creates:
-
-- `data/grpo`
-- `models/grpo`
-- `models/eval`
-- `venvs`
-- runtime cache directories
-- `tmp`
-
-### WSL runtime split
-
-If `PROJECT_STORAGE_ROOT` is under `/mnt/...`, `setup_env.sh` automatically keeps artifacts on that mounted path but moves runtime-only files to a Linux-native path.
-
-Example:
-
-```bash
-export PROJECT_STORAGE_ROOT=/mnt/e/learning/SeriousProject/transformers/.localdata
-source scripts/setup_env.sh
-```
-
-This resolves to:
-
-```bash
-PROJECT_STORAGE_ROOT=/mnt/e/learning/SeriousProject/transformers/.localdata
-PROJECT_RUNTIME_ROOT=$HOME/.cache/gsm8k-grpo
-TORCH_HOME=$HOME/.cache/gsm8k-grpo/torch
-HF_HOME=$HOME/.cache/gsm8k-grpo/huggingface
-HF_DATASETS_CACHE=$HOME/.cache/gsm8k-grpo/huggingface/datasets
-HUGGINGFACE_HUB_CACHE=$HOME/.cache/gsm8k-grpo/huggingface/hub
-VLLM_CACHE_ROOT=$HOME/.cache/gsm8k-grpo/vllm
-TRITON_CACHE_DIR=$HOME/.cache/gsm8k-grpo/triton
-TMPDIR=$HOME/.cache/gsm8k-grpo/tmp
-```
-
-That split is required for WSL because `vllm` IPC sockets and temp files do not work reliably on the Windows-mounted `/mnt/...` filesystem.
-
 ### Cleanup
 
-Preview the generated local paths that would be removed:
-
+Preview what will be deleted:
 ```bash
 bash scripts/clean_env.sh
 ```
 
-Delete them:
-
+Delete:
 ```bash
 bash scripts/clean_env.sh --yes
 ```
 
-### What `clean_env.sh` removes
-
-`clean_env.sh` uses the same root-resolution logic as `setup_env.sh`.
-
-It removes generated artifact directories under `PROJECT_STORAGE_ROOT`:
-
-- `data/grpo`
-- `models/grpo`
-- `models/eval`
-- `venvs`
-
-It also removes generated runtime directories under `PROJECT_RUNTIME_ROOT`:
-
-- `torch`
-- `huggingface`
-- `vllm`
-- `triton`
-- `tmp`
-
-Current local-root behavior:
-
-- if `PROJECT_STORAGE_ROOT` is repo-local `.localdata`, the whole `.localdata` tree is removed
-- if `PROJECT_RUNTIME_ROOT` is `$HOME/.cache/gsm8k-grpo`, that whole runtime tree can be removed too
-
-`bash scripts/clean_env.sh` is a dry-run preview. Nothing is deleted until you pass `--yes`.
-
-### WSL Troubleshooting
-
-If `vllm` fails with IPC or temp-path errors, confirm that:
-
-- `PROJECT_STORAGE_ROOT` is under `/mnt/...`
-- `PROJECT_RUNTIME_ROOT` is under `$HOME/.cache/gsm8k-grpo`
-- `TMPDIR` is not on `/mnt/...`
-
-Quick check:
-
-```bash
-echo "$PROJECT_STORAGE_ROOT"
-echo "$PROJECT_RUNTIME_ROOT"
-echo "$TMPDIR"
-```
-
-If WSL reports `syntax error: unexpected end of file` for the shell scripts, convert them to LF line endings:
-
-```bash
-sed -i 's/\r$//' scripts/setup_env.sh scripts/clean_env.sh
-chmod +x scripts/setup_env.sh scripts/clean_env.sh
-```
-
 ---
 
-## Quick Start
+## CLI Commands
 
-### Local WSL/Linux
+### Data Pipeline
 
 ```bash
-export PROJECT_STORAGE_ROOT=/mnt/e/learning/SeriousProject/transformers/.localdata
-source scripts/setup_env.sh
-
-echo "$PROJECT_STORAGE_ROOT"
-echo "$PROJECT_RUNTIME_ROOT"
-echo "$TMPDIR"
-
-python3.11 -m venv .venv
-source .venv/bin/activate
-uv pip install torch torchvision --index-url https://download.pytorch.org/whl/cu121
-uv pip install -r requirements.txt
-
+# Build train + test splits
 python -m gsm8k_grpo.cli.pipeline --splits train test
-python -m pytest tests/ -v
+
+# Build only test split
+python -m gsm8k_grpo.cli.pipeline --splits test
+
+# Custom output directory
+python -m gsm8k_grpo.cli.pipeline --splits train test --output_dir ./my_data
+
+# Custom system prompt
+python -m gsm8k_grpo.cli.pipeline --splits train test \
+  --system_prompt "Solve the math problem step by step. End with #### answer."
 ```
 
-Smoke evaluation for a few samples:
+### Training
 
 ```bash
+# Basic training
+python -m gsm8k_grpo.cli.train --model_name Qwen/Qwen3.5-0.8B-Base
+
+# Custom settings
+python -m gsm8k_grpo.cli.train \
+  --model_name Qwen/Qwen3.5-0.8B-Base \
+  --num_generations 8 \
+  --beta 0.02 \
+  --batch_size 4 \
+  --lr 1e-5 \
+  --epochs 3
+
+# Resume from checkpoint
+python -m gsm8k_grpo.cli.train \
+  --model_name Qwen/Qwen3.5-0.8B-Base \
+  --resume_from_checkpoint .localdata/models/grpo/checkpoint-500
+
+# Use transformers backend (no vLLM)
+python -m gsm8k_grpo.cli.train \
+  --model_name Qwen/Qwen3.5-0.8B-Base \
+  --no_use_vllm
+```
+
+### Evaluation
+
+```bash
+# vLLM backend (fast, GPU)
 python -m gsm8k_grpo.cli.evaluate \
   --model_name Qwen/Qwen3.5-0.8B \
-  --eval_backend transformers \
-  --num_samples 8 \
+  --eval_backend vllm \
+  --batch_size 64
+
+# transformers backend (compatible)
+python -m gsm8k_grpo.cli.evaluate \
+  --model_name Qwen/Qwen3.5-0.8B \
   --batch_size 8 \
-  --output_dir "$PROJECT_STORAGE_ROOT/models/eval_smoke"
-```
+  --num_samples 100
 
-### Local PowerShell
-
-```powershell
-. .\scripts\setup_env.ps1
-python -m venv .venv
-. .\.venv\Scripts\Activate.ps1
-pip install -r requirements.txt
-python -m gsm8k_grpo.cli.pipeline --splits train test
-```
-
-### Canonical CLI entrypoints
-
-```bash
-python -m gsm8k_grpo.cli.pipeline
-python -m gsm8k_grpo.cli.train
-python -m gsm8k_grpo.cli.evaluate
+# Local checkpoint
+python -m gsm8k_grpo.cli.evaluate \
+  --model_name .localdata/models/grpo/checkpoint-500 \
+  --eval_backend vllm \
+  --batch_size 32
 ```
 
 ---
 
-## Storage Defaults
+## Storage
 
-Repo code defaults to this Linux/HPC storage root when `PROJECT_STORAGE_ROOT` is not set:
+Default storage structure (all under project directory):
 
-```bash
-/data/cmpe258-sp24/pratikkorat
+```
+.localdata/
+├── data/grpo/
+│   ├── trainer/
+│   │   ├── jsonl/          train.jsonl, test.jsonl
+│   │   └── hf_dataset/     HuggingFace DatasetDict
+│   ├── analysis/
+│   │   ├── jsonl/          Includes reference_solution
+│   │   └── hf_dataset/
+│   └── reports/
+│       ├── manifest.json
+│       ├── validation_summary.json
+│       └── leakage_report.json
+├── models/grpo/             # Training checkpoints
+│   └── checkpoint-*/        # Saved checkpoints
+└── models/eval/            # Evaluation results
+    └── eval_results.json
 ```
 
-Derived runtime paths:
-
-```bash
-TORCH_HOME=/data/cmpe258-sp24/pratikkorat/.cache/torch
-HF_HOME=/data/cmpe258-sp24/pratikkorat/.cache/huggingface
-HF_DATASETS_CACHE=/data/cmpe258-sp24/pratikkorat/.cache/huggingface/datasets
-HUGGINGFACE_HUB_CACHE=/data/cmpe258-sp24/pratikkorat/.cache/huggingface/hub
-VLLM_CACHE_ROOT=/data/cmpe258-sp24/pratikkorat/.cache/vllm
-TRITON_CACHE_DIR=/data/cmpe258-sp24/pratikkorat/.cache/triton
-TMPDIR=/data/cmpe258-sp24/pratikkorat/tmp
-dataset artifacts=/data/cmpe258-sp24/pratikkorat/data/grpo
-training outputs=/data/cmpe258-sp24/pratikkorat/models/grpo
-evaluation outputs=/data/cmpe258-sp24/pratikkorat/models/eval
-venv=/data/cmpe258-sp24/pratikkorat/venvs/gsm8k-grpo
-```
-
-For WSL local development with artifacts under `/mnt/e/...`, the setup script resolves a split layout like:
-
-```bash
-PROJECT_STORAGE_ROOT=/mnt/e/learning/SeriousProject/transformers/.localdata
-PROJECT_RUNTIME_ROOT=$HOME/.cache/gsm8k-grpo
-TORCH_HOME=$HOME/.cache/gsm8k-grpo/torch
-HF_HOME=$HOME/.cache/gsm8k-grpo/huggingface
-TMPDIR=$HOME/.cache/gsm8k-grpo/tmp
-```
-
----
-
-## Python API
-
-```python
-from gsm8k_grpo.data.pipeline import build_pipeline
-
-trainer_dd = build_pipeline(
-    splits=["train", "test"],
-    output_dir="./data/grpo",
-)
-```
-
-## Output Artifacts
-
-```text
-data/grpo/
-|-- trainer/
-|   |-- jsonl/          train.jsonl, test.jsonl
-|   `-- hf_dataset/     HuggingFace DatasetDict
-|-- analysis/
-|   |-- jsonl/          includes reference_solution
-|   `-- hf_dataset/
-`-- reports/
-    |-- manifest.json
-    |-- validation_summary.json
-    `-- leakage_report.json
-```
-
-### Sample trainer record
+### Sample Data Record
 
 ```json
 {
@@ -336,78 +310,162 @@ data/grpo/
 
 ## Reward Functions
 
-```python
-from gsm8k_grpo.rewards import composite_reward, compute_grpo_advantages
+### Components
 
-score = composite_reward(completion="Step 1...\n#### 72", reference="72")
-advantages = compute_grpo_advantages([0.9, 0.3, 0.7, 1.0, 0.1])
+| Function | Weight | Description |
+|----------|--------|-------------|
+| `exact_match_reward` | 1.0 | Correct final numeric answer |
+| `soft_numeric_reward` | 0.3 | Exponential decay based on relative error |
+| `format_reward` | 0.2 | Contains `####`, has reasoning lines, numeric after marker |
+| `length_penalty` | 0.1 | Penalizes too short (<20) or too long (>512) responses |
+
+### Python API
+
+```python
+from gsm8k_grpo.rewards.core import (
+    composite_reward,
+    compute_grpo_advantages,
+    exact_match_reward,
+    format_reward,
+    soft_numeric_reward,
+)
+
+# Score a completion
+score = composite_reward(
+    completion="Step 1.\nStep 2.\n#### 72",
+    reference="72"
+)
+
+# Compute group advantages for GRPO
+rewards = [0.9, 0.3, 0.7, 1.0, 0.1]
+advantages = compute_grpo_advantages(rewards)
 ```
 
-| Component | Weight | Measures |
-|-----------|--------|----------|
-| `exact_match_reward` | 1.0 | Correct final numeric answer |
-| `soft_numeric_reward` | 0.3 | Closeness |
-| `format_reward` | 0.2 | Presence of `####` plus reasoning structure |
-| `length_penalty` | 0.1 | Avoids too-short or too-long responses |
+### Answer Extraction
+
+The pipeline extracts answers using the `####` marker, falling back to the last numeric value in the completion. Supports:
+- Integers: `42`, `-15`
+- Decimals: `3.14`, `-0.5`
+- Fractions: `1/2` → `0.5`
+- Currency: `$1,200` → `1200`
+- Percentages: `35%` → `35`
+- Comma-separated: `1,024` → `1024`
+- Word numbers: `twelve` → `12`
 
 ---
 
-## Training and Evaluation
+## Training
 
-### Linux HPC runbook
+### GRPO Configuration Defaults
 
-```bash
-export PROJECT_STORAGE_ROOT=/data/cmpe258-sp24/pratikkorat
-source scripts/setup_env.sh
+| Parameter | Default | Description |
+|-----------|---------|-------------|
+| `model_name` | `Qwen/Qwen3.5-0.8B-Base` | Base model |
+| `num_generations` | 4 | Completions per prompt |
+| `beta` | 0.04 | KL penalty coefficient |
+| `batch_size` | 2 | Per-device batch size |
+| `gradient_accumulation_steps` | 4 | Effective batch = 8 |
+| `learning_rate` | 1e-5 | Optimizer LR |
+| `epochs` | 1 | Training epochs |
+| `max_completion_length` | 512 | Max generation tokens |
+| `use_vllm` | true | Use vLLM for generation |
 
-python3.11 -m venv /data/cmpe258-sp24/pratikkorat/venvs/gsm8k-grpo
-source /data/cmpe258-sp24/pratikkorat/venvs/gsm8k-grpo/bin/activate
-uv pip install torch torchvision --index-url https://download.pytorch.org/whl/cu121
-uv pip install -r requirements.txt
+### Training Output
 
-python -m gsm8k_grpo.cli.pipeline
-
-python -m gsm8k_grpo.cli.train --model_name Qwen/Qwen3.5-0.8B-Base
-
-python -m gsm8k_grpo.cli.train \
-  --model_name Qwen/Qwen3.5-0.8B-Base \
-  --resume_from_checkpoint /data/cmpe258-sp24/pratikkorat/models/grpo/checkpoint-500
-
-python -m gsm8k_grpo.cli.evaluate \
-  --model_name /data/cmpe258-sp24/pratikkorat/models/grpo/checkpoint-500 \
-  --eval_backend vllm \
-  --batch_size 64 \
-  --gpu_memory_utilization 0.8 \
-  --output_dir /data/cmpe258-sp24/pratikkorat/models/eval_full
+```
+.localdata/models/grpo/
+├── checkpoint-500/
+│   ├── config.json
+│   ├── model.safetensors
+│   ├── tokenizer.json
+│   └── trainer_state.json
+└── checkpoint-1000/
 ```
 
-Training defaults to `report_to=none`, so no tracker login is required. Training defaults to `vllm` on the supported Linux/HPC path. Evaluation also defaults to `vllm`, and `--gpu_memory_utilization` defaults to `0.8`.
+---
 
-For local evaluation, `--model_name` must point to either:
+## Evaluation
 
-- a valid local saved model/checkpoint directory containing tokenizer and model files
-- a Hugging Face model id
+### Evaluation Results Format
 
-### Qwen3.5 on HPC
-
-If `vllm` is not aligned with your cluster environment, use the `transformers` backend first:
-
-```bash
-python -m gsm8k_grpo.cli.evaluate \
-  --model_name Qwen/Qwen3.5-0.8B \
-  --eval_backend transformers \
-  --num_samples 8 \
-  --batch_size 8 \
-  --output_dir /data/cmpe258-sp24/pratikkorat/models/eval_qwen_transformers_smoke
+```json
+{
+  "model_name": "Qwen/Qwen3.5-0.8B",
+  "split": "test",
+  "num_samples": 1319,
+  "exact_match_accuracy": 0.42,
+  "mean_composite_reward": 0.65,
+  "mean_format_reward": 0.71,
+  "by_difficulty": {
+    "easy": {"n": 500, "accuracy": 0.55, "mean_reward": 0.72},
+    "medium": {"n": 500, "accuracy": 0.38, "mean_reward": 0.61},
+    "hard": {"n": 319, "accuracy": 0.28, "mean_reward": 0.54}
+  },
+  "timestamp": "2024-01-15T10:30:00Z"
+}
 ```
 
-Once the `vllm` environment is healthy:
+---
+
+## Running Tests
 
 ```bash
-python -m gsm8k_grpo.cli.evaluate \
-  --model_name Qwen/Qwen3.5-0.8B \
-  --eval_backend vllm \
-  --batch_size 64 \
-  --gpu_memory_utilization 0.8 \
-  --output_dir /data/cmpe258-sp24/pratikkorat/models/eval_qwen_full
+# Run all tests
+python -m pytest tests/ -v
+
+# Run specific test class
+python -m pytest tests/test_pipeline.py::TestRewardFunctions -v
+
+# Run with coverage
+python -m pytest tests/ -v --cov=gsm8k_grpo
+```
+
+### Test Categories
+
+- `TestNormaliseNumeric` - Numeric parsing
+- `TestParsing` - GSM8K answer extraction
+- `TestRecordValidation` - Data validation
+- `TestRewardFunctions` - Reward computation
+- `TestGRPOAdvantages` - Advantage computation
+- `TestLeakageChecks` - Cross-split leakage detection
+- `TestBuildPipeline` - End-to-end pipeline
+
+---
+
+## Dependencies
+
+```
+transformers
+datasets
+accelerate
+trl
+vllm
+tqdm
+torch (CUDA 12.1)
+```
+
+Install:
+```bash
+pip install torch torchvision --index-url https://download.pytorch.org/whl/cu121
+pip install transformers datasets accelerate trl vllm tqdm
+```
+
+---
+
+## Configuration
+
+All defaults are in `gsm8k_grpo/config/project.py`. Override via CLI flags or environment variables:
+
+```python
+from gsm8k_grpo.config.project import ProjectConfig, TrainingConfig
+
+# Get resolved config
+cfg = ProjectConfig()
+training_cfg = cfg.resolved_training()
+
+# Override
+training_cfg = training_cfg._replace(
+    model_name="Qwen/Qwen3.5-1.5B-Base",
+    learning_rate=5e-6,
+)
 ```

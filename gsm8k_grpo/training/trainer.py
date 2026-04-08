@@ -12,7 +12,12 @@ TRL's GRPOTrainer. Three public functions:
 from __future__ import annotations
 
 import logging
+import signal
+import sys
 from pathlib import Path
+from typing import Optional
+
+import torch
 
 from gsm8k_grpo.config.paths import configure_runtime_environment
 from gsm8k_grpo.config.project import TrainingConfig
@@ -20,6 +25,11 @@ from gsm8k_grpo.training.model import load_model_and_tokenizer
 from gsm8k_grpo.training.runtime_compat import prepare_trl_runtime, require_vllm
 
 _OPTIONAL_BACKEND_ISSUES = prepare_trl_runtime()
+
+logger = logging.getLogger("gsm8k_grpo.trainer")
+for _issue in _OPTIONAL_BACKEND_ISSUES:
+    logger.warning(_issue)
+
 
 try:
     from datasets import Dataset
@@ -46,9 +56,50 @@ def _require_trl() -> None:
             f"Original error: {_trl_err_msg}"
         )
 
-logger = logging.getLogger("gsm8k_grpo.trainer")
-for _issue in _OPTIONAL_BACKEND_ISSUES:
-    logger.warning(_issue)
+
+def _check_gpu_memory() -> dict:
+    """Check available GPU memory and return diagnostics."""
+    if not torch.cuda.is_available():
+        return {"available": False, "error": "CUDA not available"}
+    
+    try:
+        device = torch.cuda.current_device()
+        total = torch.cuda.get_device_properties(device).total_memory / 1e9
+        allocated = torch.cuda.memory_allocated(device) / 1e9
+        reserved = torch.cuda.memory_reserved(device) / 1e9
+        free = total - reserved
+        
+        return {
+            "available": True,
+            "total_gb": round(total, 2),
+            "allocated_gb": round(allocated, 2),
+            "reserved_gb": round(reserved, 2),
+            "free_gb": round(free, 2),
+        }
+    except Exception as e:
+        return {"available": False, "error": str(e)}
+
+
+def _handle_oom_error(cfg: TrainingConfig, attempt: int, max_attempts: int = 3) -> Optional[TrainingConfig]:
+    """Handle OOM errors by reducing batch sizes."""
+    if attempt >= max_attempts:
+        logger.error("Max OOM retry attempts reached. Giving up.")
+        return None
+    
+    logger.warning(f"OOM error on attempt {attempt + 1}/{max_attempts}")
+    
+    new_batch_size = max(1, cfg.per_device_train_batch_size // 2)
+    new_grad_accum = cfg.gradient_accumulation_steps * 2
+    
+    if new_batch_size == cfg.per_device_train_batch_size:
+        logger.warning("Cannot reduce batch size further. Trying gradient checkpointing.")
+    
+    logger.info(f"Retrying with batch_size={new_batch_size}, grad_accum={new_grad_accum}")
+    
+    return cfg._replace(
+        per_device_train_batch_size=new_batch_size,
+        gradient_accumulation_steps=new_grad_accum,
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -182,10 +233,17 @@ def build_grpo_trainer(
 # End-to-end orchestration
 # ---------------------------------------------------------------------------
 
-def run_training(cfg: TrainingConfig) -> None:
-    """Load model, load data, train, save.
+class TrainingError(Exception):
+    """Custom exception for training failures."""
+    pass
 
-    This is the single function called by the train_grpo.py entry point.
+
+def run_training(cfg: TrainingConfig, max_oom_retries: int = 3) -> None:
+    """Load model, load data, train, save.
+    
+    Args:
+        cfg: Training configuration
+        max_oom_retries: Maximum number of retries on OOM errors
     """
     logger.info("=" * 60)
     logger.info("GRPO Training Run")
@@ -209,16 +267,88 @@ def run_training(cfg: TrainingConfig) -> None:
     logger.info("  torchhome : %s", runtime_env["TORCH_HOME"])
     logger.info("  hf_home   : %s", runtime_env["HF_HOME"])
     logger.info("  vllmcache : %s", runtime_env["VLLM_CACHE_ROOT"])
+    
+    gpu_info = _check_gpu_memory()
+    if gpu_info["available"]:
+        logger.info(
+            "  GPU memory: %.1fGB total, %.1fGB free, %.1fGB used",
+            gpu_info["total_gb"],
+            gpu_info["free_gb"],
+            gpu_info["allocated_gb"],
+        )
+    else:
+        logger.warning("  GPU memory: %s", gpu_info.get("error", "unavailable"))
 
     if cfg.use_vllm:
         require_vllm("training")
 
-    model, tokenizer = load_model_and_tokenizer(cfg.model_name, training=True)
     train_ds = make_trl_dataset(cfg.dataset_path, split="train")
     eval_ds = make_trl_dataset(cfg.dataset_path, split="test")
-
-    trainer = build_grpo_trainer(cfg, model, tokenizer, train_ds, eval_ds)
-    trainer.train(resume_from_checkpoint=cfg.resume_from_checkpoint)
+    
+    model = None
+    tokenizer = None
+    trainer = None
+    
+    def signal_handler(signum, frame):
+        logger.warning("Received interrupt signal. Saving checkpoint...")
+        if trainer is not None:
+            try:
+                trainer.save_model(str(output_dir))
+                logger.info("Emergency checkpoint saved.")
+            except Exception as e:
+                logger.error(f"Failed to save emergency checkpoint: {e}")
+        logger.info("Shutdown complete.")
+        sys.exit(0)
+    
+    prev_handler = signal.signal(signal.SIGINT, signal_handler)
+    
+    try:
+        oom_attempt = 0
+        
+        while oom_attempt <= max_oom_retries:
+            try:
+                model, tokenizer = load_model_and_tokenizer(cfg.model_name, training=True)
+                trainer = build_grpo_trainer(cfg, model, tokenizer, train_ds, eval_ds)
+                
+                trainer.train(resume_from_checkpoint=cfg.resume_from_checkpoint)
+                break
+                
+            except (torch.cuda.OutOfMemoryError, RuntimeError) as e:
+                error_msg = str(e).lower()
+                is_oom = "out of memory" in error_msg or "oom" in error_msg
+                
+                if is_oom and oom_attempt < max_oom_retries:
+                    logger.error(f"OOM error on attempt {oom_attempt + 1}: {e}")
+                    
+                    if trainer is not None:
+                        try:
+                            trainer.save_model(str(output_dir))
+                            logger.info("Checkpoint saved before OOM retry.")
+                        except Exception as save_err:
+                            logger.warning(f"Could not save checkpoint: {save_err}")
+                    
+                    del trainer
+                    del model
+                    if tokenizer is not None:
+                        del tokenizer
+                    torch.cuda.empty_cache()
+                    
+                    new_cfg = _handle_oom_error(cfg, oom_attempt, max_oom_retries)
+                    if new_cfg is None:
+                        raise TrainingError("OOM recovery failed: max retries reached")
+                    
+                    cfg = new_cfg
+                    oom_attempt += 1
+                    logger.info(f"Retrying with reduced batch size (attempt {oom_attempt + 1}/{max_oom_retries + 1})")
+                else:
+                    raise
+        
+        if trainer is None:
+            raise TrainingError("Training failed: trainer not initialized")
+            
+    finally:
+        signal.signal(signal.SIGINT, prev_handler)
+        
     trainer.save_model(str(output_dir))
     tokenizer.save_pretrained(str(output_dir))
     logger.info(f"Model saved to {output_dir}")

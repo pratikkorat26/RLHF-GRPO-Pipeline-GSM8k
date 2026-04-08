@@ -5,25 +5,11 @@ script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
 repo_root="$(cd "${script_dir}/.." && pwd -P)"
 default_storage_root="${repo_root}/.localdata"
 
-is_wsl() {
-  if grep -qiE '(microsoft|wsl)' /proc/version 2>/dev/null; then
-    return 0
-  fi
-  if uname -r 2>/dev/null | grep -qiE '(microsoft|wsl)'; then
-    return 0
-  fi
-  return 1
-}
-
 PROJECT_STORAGE_ROOT="${PROJECT_STORAGE_ROOT:-$default_storage_root}"
 export PROJECT_STORAGE_ROOT
 
 if [[ -z "${PROJECT_RUNTIME_ROOT:-}" ]]; then
-  if is_wsl && [[ "$PROJECT_STORAGE_ROOT" == /mnt/* ]]; then
-    PROJECT_RUNTIME_ROOT="$HOME/.cache/gsm8k-grpo"
-  else
-    PROJECT_RUNTIME_ROOT="$PROJECT_STORAGE_ROOT"
-  fi
+  PROJECT_RUNTIME_ROOT="$PROJECT_STORAGE_ROOT"
 fi
 export PROJECT_RUNTIME_ROOT
 
